@@ -1,22 +1,19 @@
-export module music.timeline;
+export module editor.timeline;
 
 import std;
 
-export namespace music {
-    struct Peak {
-        float low{};
-        float high{};
-        float meanSquare{};
-    };
-
-    struct PeakLevel {
-        std::uint64_t blockFrames{};
-        std::vector<Peak> values;
-    };
-
+export namespace editor {
     struct Timeline {
         double first{};
         double count{1};
+
+        double frame(double fraction) const {
+            return first + count * fraction;
+        }
+
+        double fraction(double frame) const {
+            return (frame - first) / count;
+        }
 
         void fit(std::uint64_t frames) {
             first = 0;
@@ -31,6 +28,10 @@ export namespace music {
 
         void pan(double frames, std::uint64_t total) {
             first = std::clamp(first + frames, 0.0, static_cast<double>(total) - count);
+        }
+
+        void reveal(double frame, std::uint64_t total) {
+            if (frame < first || frame >= first + count) first = std::clamp(frame - count / 2, 0.0, static_cast<double>(total) - count);
         }
     };
 }

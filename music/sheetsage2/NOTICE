@@ -1,0 +1,15 @@
+SheetSage2 native inference
+
+Network structure, token grammar, overlap stitching, and musical spelling rules
+are adapted from the official m-a-p/SheetSage2 implementation:
+https://huggingface.co/m-a-p/SheetSage2/tree/b83c3d79a6d98bcffaf8f9ed112c90aa887887bc
+
+The encoder uses the official MERT-v2-FullSong checkpoint:
+https://huggingface.co/m-a-p/MERT-v2-FullSong/tree/d8ba1c745e733b3908ce6ad16ebeb17ac7600a42
+
+Both model repositories specify CC BY-NC 4.0:
+https://creativecommons.org/licenses/by-nc/4.0/
+
+The decoder architecture follows BART as implemented in Hugging Face
+Transformers 4.45.2 (Apache License 2.0). The C++/CUDA implementation here is
+native code and does not load Python or Transformers at runtime.

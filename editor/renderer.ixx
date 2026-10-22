@@ -4,13 +4,14 @@ module;
 #include <windows.h>
 #include <wrl/client.h>
 
-export module music.renderer;
+export module editor.renderer;
 
 import std;
 import vulkan;
 import music.audio;
+import editor.waveform;
 
-export namespace music {
+export namespace editor {
     struct Color {
         float r{}, g{}, b{}, a{1};
     };
@@ -54,7 +55,7 @@ export namespace music {
         float scale{1};
         std::vector<Vertex> vertices;
         std::uint32_t waveLayer{};
-        Rect waveRect;
+        Rect waveRect, overviewRect;
         double waveFirst{}, waveCount{1};
         bool showWave{};
 
@@ -63,10 +64,10 @@ export namespace music {
         Renderer(const Renderer&)            = delete;
         Renderer& operator=(const Renderer&) = delete;
         void resize();
-        void upload(const AudioClip& clip);
+        void upload(const music::AudioClip& clip);
         void resetFonts();
         void rect(Rect area, Color color, float radius = 0);
-        void text(std::wstring_view value, float size, float x, float y, Color color, float width = 2000, bool centered = false);
+        void text(std::wstring_view value, float size, float x, float y, Color color, float width = 2000, bool centered = false, bool fit = false);
         void draw();
 
     private:

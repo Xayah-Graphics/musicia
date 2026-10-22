@@ -1,35 +1,25 @@
-#include <ole2.h>
-#include <shellapi.h>
-#include <windows.h>
-
 import std;
-import music.window;
+import music.audio;
+import music.analysis;
+import music.sheetsage2;
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    const auto initialized = OleInitialize(nullptr);
-    if (FAILED(initialized)) return 1;
-    int result = 0;
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv) {
+#else
+int main(int argc, char** argv) {
+#endif
     try {
-        music::Window window;
-        int argc{};
-        auto* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        std::filesystem::path path;
-        if (argc > 1) path = argv[1];
-        LocalFree(argv);
-        if (!path.empty()) window.load(std::move(path));
-        MSG message{};
-        while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-            TranslateMessage(&message);
-            DispatchMessageW(&message);
-        }
-        if (!window.fatalError.empty()) throw std::runtime_error(window.fatalError);
-        result = static_cast<int>(message.wParam);
-    } catch (const std::exception& exception) {
-        const std::string message = exception.what();
-        const std::wstring wide(message.begin(), message.end());
-        MessageBoxW(nullptr, wide.c_str(), L"Music — Error", MB_OK | MB_ICONERROR);
-        result = 1;
+        const auto clip = music::AudioClip::read(std::filesystem::path(argv[1]));
+        std::println("Audio: {} Hz, {} channels, {:.3f} seconds", clip.sampleRate, clip.channels, static_cast<double>(clip.frames) / clip.sampleRate);
+        const auto directory = argc > 3 ? std::filesystem::path(argv[3]) : std::filesystem::path(MUSIC_MODEL_DIRECTORY);
+        music::SheetSage2 model(directory);
+        music::AnalysisProgress progress;
+        const auto result = model.analyze(clip.analysis, progress);
+        result.save(std::filesystem::path(argv[2]));
+        std::println("Analysis: {:.3f} s; {:.3f} BPM; {} beats; {} chord intervals; {} notes", result.elapsed, result.bpm, result.beats.size(), result.chords.size(), result.notes.size());
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
     }
-    OleUninitialize();
-    return result;
 }

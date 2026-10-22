@@ -4,13 +4,14 @@ module;
 #include <windows.h>
 #include <wrl/client.h>
 
-module music.renderer;
+module editor.renderer;
 
 import std;
 import vulkan;
 import music.audio;
+import editor.waveform;
 
-namespace music {
+namespace editor {
     struct Push {
         std::array<float, 4> rect{};
         std::array<float, 4> view{};
@@ -147,14 +148,15 @@ namespace music {
         }
     }
 
-    void Renderer::upload(const AudioClip& clip) {
+    void Renderer::upload(const music::AudioClip& clip) {
+        const auto peaks = waveform(clip);
         device.waitIdle();
         channels = clip.channels;
         frames   = static_cast<std::uint32_t>(clip.frames);
         peakOffsets.clear();
         peakBlocks.clear();
         std::size_t floats = 0;
-        for (const auto& level : clip.peaks) {
+        for (const auto& level : peaks) {
             peakOffsets.push_back(static_cast<std::uint32_t>(floats));
             peakBlocks.push_back(static_cast<std::uint32_t>(level.blockFrames));
             floats += level.values.size() * sizeof(Peak) / sizeof(float);
@@ -163,7 +165,7 @@ namespace music {
         floats += clip.samples.size();
         waveBuffer        = Buffer(physical, device, floats * sizeof(float), vk::BufferUsageFlagBits::eStorageBuffer);
         auto* destination = static_cast<float*>(waveBuffer.mapped);
-        for (std::size_t i = 0; i < clip.peaks.size(); ++i) std::memcpy(destination + peakOffsets[i], clip.peaks[i].values.data(), clip.peaks[i].values.size() * sizeof(Peak));
+        for (std::size_t i = 0; i < peaks.size(); ++i) std::memcpy(destination + peakOffsets[i], peaks[i].values.data(), peaks[i].values.size() * sizeof(Peak));
         std::memcpy(destination + rawOffset, clip.samples.data(), clip.samples.size() * sizeof(float));
         const vk::DescriptorBufferInfo info{.buffer = *waveBuffer.handle, .range = vk::WholeSize};
         device.updateDescriptorSets(vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &info}, {});
@@ -187,19 +189,26 @@ namespace music {
         for (const auto& corner : std::array{std::array{0.f, 0.f}, std::array{1.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 1.f}}) vertices.push_back({area.x + area.width * corner[0], area.y + area.height * corner[1], area.width * corner[0], area.height * corner[1], color, radius > 0 ? 2.f : 0.f, radius * scale, area.width, area.height});
     }
 
-    void Renderer::text(std::wstring_view value, float size, float x, float y, Color color, float width, bool centered) {
+    void Renderer::text(std::wstring_view value, float size, float x, float y, Color color, float width, bool centered, bool fit) {
         Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
         auto result = fonts->CreateTextFormat(L"Segoe UI Variable", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size * scale, L"en-US", &format);
         if (FAILED(result)) throw std::runtime_error("Unable to create text format.");
         format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         if (centered) format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis;
-        fonts->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
-        const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-        format->SetTrimming(&trimming, ellipsis.Get());
+        if (!fit) {
+            Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis;
+            fonts->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
+            const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+            format->SetTrimming(&trimming, ellipsis.Get());
+        }
         Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
         result = fonts->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format.Get(), width * scale, size * scale * 2, &layout);
         if (FAILED(result)) throw std::runtime_error("Unable to lay out text.");
+        if (fit) {
+            DWRITE_TEXT_METRICS metrics{};
+            layout->GetMetrics(&metrics);
+            if (metrics.widthIncludingTrailingWhitespace > width * scale) return;
+        }
         textColor = color;
         result    = layout->Draw(nullptr, this, x * scale, y * scale);
         if (FAILED(result)) throw std::runtime_error("Unable to rasterize text.");
@@ -249,24 +258,32 @@ namespace music {
         command.draw(waveLayer, 1, 0, 0);
         if (showWave) {
             command.bindPipeline(vk::PipelineBindPoint::eGraphics, *wavePipeline);
-            // Filaments keep a 3.5 DIP pitch; sample-level zoom resolves the signed signal per pixel.
-            const bool detail  = waveCount <= waveRect.width / 3.5f;
-            const auto columns = static_cast<std::uint32_t>(detail ? waveRect.width * scale : waveRect.width / 3.5f);
-            push.view          = {static_cast<float>(waveCount / columns), static_cast<float>(waveFirst - std::floor(waveFirst)), waveRect.width * scale / columns, detail ? 1.f : 0.f};
-            push.data          = {static_cast<std::uint32_t>(waveFirst), 0, 0, rawOffset};
-            push.track         = {channels, 0, frames, 0};
-            for (std::size_t level = 0; level < peakBlocks.size() && peakBlocks[level] <= push.view[0] / 4; ++level) {
-                push.data[1]  = peakOffsets[level];
-                push.data[2]  = peakBlocks[level];
-                push.track[3] = (frames + peakBlocks[level] - 1) / peakBlocks[level];
-            }
-            push.color = {waveformColor.r, waveformColor.g, waveformColor.b, waveformColor.a};
-            for (std::uint32_t channel = 0; channel < channels; ++channel) {
-                const auto channelHeight = waveRect.height / channels;
-                push.rect                = {waveRect.x * scale, (waveRect.y + channelHeight * channel) * scale, waveRect.width * scale, channelHeight * scale};
-                push.track[1]            = channel;
-                command.pushConstants<Push>(*pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, push);
-                command.draw(6, columns, 0, 0);
+            // Both views read the same peak pyramid and PCM buffer.
+            for (const bool overview : {false, true}) {
+                const auto area = overview ? overviewRect : waveRect;
+                const double first = overview ? 0 : waveFirst;
+                const double count = overview ? frames : waveCount;
+                const bool detail = !overview && count <= area.width / 3.5f;
+                const auto columns = static_cast<std::uint32_t>(detail ? area.width * scale : area.width / (overview ? 2.f : 3.5f));
+                push.view = {static_cast<float>(count / columns), static_cast<float>(first - std::floor(first)), area.width * scale / columns, detail ? 1.f : 0.f};
+                push.data = {static_cast<std::uint32_t>(first), 0, 0, rawOffset};
+                push.track = {channels, 0, frames, 0};
+                push.screen[2] = overview ? 1.f : 0.f;
+                for (std::size_t level = 0; level < peakBlocks.size() && peakBlocks[level] <= push.view[0] / 4; ++level) {
+                    push.data[1] = peakOffsets[level];
+                    push.data[2] = peakBlocks[level];
+                    push.track[3] = (frames + peakBlocks[level] - 1) / peakBlocks[level];
+                }
+                const auto color = overview ? muted : waveformColor;
+                push.color = {color.r, color.g, color.b, color.a};
+                const auto tracks = overview ? 1u : channels;
+                for (std::uint32_t channel = 0; channel < tracks; ++channel) {
+                    const auto channelHeight = area.height / tracks;
+                    push.rect = {area.x * scale, (area.y + channelHeight * channel) * scale, area.width * scale, channelHeight * scale};
+                    push.track[1] = channel;
+                    command.pushConstants<Push>(*pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, push);
+                    command.draw(6, columns, 0, 0);
+                }
             }
         }
         command.bindPipeline(vk::PipelineBindPoint::eGraphics, *uiPipeline);

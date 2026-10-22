@@ -25,37 +25,41 @@ Fragment vertexMain(uint vertex : SV_VulkanVertexID, uint column : SV_VulkanInst
     float high = -1e30;
     float squareSum = 0;
     uint sampleCount = 0;
-    if (push.data.z == 0) {
-        if (push.view.x < 1.0) {
-            float a = samples[push.data.w + first * push.track.x + push.track.y];
-            float b = samples[push.data.w + min(first + 1, push.track.z - 1) * push.track.x + push.track.y];
-            float value = lerp(a, b, frac(localFirst));
-            uint endFrame = min(push.data.x + uint(floor(localFirst + push.view.x)), push.track.z - 1);
-            float endA = samples[push.data.w + endFrame * push.track.x + push.track.y];
-            float endB = samples[push.data.w + min(endFrame + 1, push.track.z - 1) * push.track.x + push.track.y];
-            float next = lerp(endA, endB, frac(localFirst + push.view.x));
-            low = min(value, next);
-            high = max(value, next);
-            if (endFrame > first) { low = min(low, b); high = max(high, b); }
-        } else {
-            for (uint frame = first; frame < max(first + 1, last); ++frame) {
-                float value = samples[push.data.w + frame * push.track.x + push.track.y];
-                low = min(low, value);
-                high = max(high, value);
-                squareSum += value * value;
-                ++sampleCount;
+    uint channelFirst = push.screen.z == 1 ? 0 : push.track.y;
+    uint channelEnd = push.screen.z == 1 ? push.track.x : push.track.y + 1;
+    for (uint channel = channelFirst; channel < channelEnd; ++channel) {
+        if (push.data.z == 0) {
+            if (push.view.x < 1.0) {
+                float a = samples[push.data.w + first * push.track.x + channel];
+                float b = samples[push.data.w + min(first + 1, push.track.z - 1) * push.track.x + channel];
+                float value = lerp(a, b, frac(localFirst));
+                uint endFrame = min(push.data.x + uint(floor(localFirst + push.view.x)), push.track.z - 1);
+                float endA = samples[push.data.w + endFrame * push.track.x + channel];
+                float endB = samples[push.data.w + min(endFrame + 1, push.track.z - 1) * push.track.x + channel];
+                float next = lerp(endA, endB, frac(localFirst + push.view.x));
+                low = min(low, min(value, next));
+                high = max(high, max(value, next));
+                if (endFrame > first) { low = min(low, b); high = max(high, b); }
+            } else {
+                for (uint frame = first; frame < max(first + 1, last); ++frame) {
+                    float value = samples[push.data.w + frame * push.track.x + channel];
+                    low = min(low, value);
+                    high = max(high, value);
+                    squareSum += value * value;
+                    ++sampleCount;
+                }
             }
-        }
-    } else {
-        uint begin = first / push.data.z;
-        uint end = min((last + push.data.z - 1) / push.data.z, push.track.w);
-        for (uint block = begin; block < max(begin + 1, end); ++block) {
-            uint offset = push.data.y + (block * push.track.x + push.track.y) * 3;
-            low = min(low, samples[offset]);
-            high = max(high, samples[offset + 1]);
-            uint count = min(last, (block + 1) * push.data.z) - max(first, block * push.data.z);
-            squareSum += samples[offset + 2] * count;
-            sampleCount += count;
+        } else {
+            uint begin = first / push.data.z;
+            uint end = min((last + push.data.z - 1) / push.data.z, push.track.w);
+            for (uint block = begin; block < max(begin + 1, end); ++block) {
+                uint offset = push.data.y + (block * push.track.x + channel) * 3;
+                low = min(low, samples[offset]);
+                high = max(high, samples[offset + 1]);
+                uint count = min(last, (block + 1) * push.data.z) - max(first, block * push.data.z);
+                squareSum += samples[offset + 2] * count;
+                sampleCount += count;
+            }
         }
     }
     float center = push.rect.y + push.rect.w * 0.5;
@@ -63,7 +67,7 @@ Fragment vertexMain(uint vertex : SV_VulkanVertexID, uint column : SV_VulkanInst
     float top = -clamp(high, -1.0, 1.0) * amplitude;
     float bottom = -clamp(low, -1.0, 1.0) * amplitude;
     float rms = sampleCount > 0 ? sqrt(squareSum / sampleCount) * amplitude : 0;
-    float radius = 0.84 * push.screen.w;
+    float radius = (push.screen.z == 1 ? 0.55 : 0.84) * push.screen.w;
     float energy = max(0.4 * push.screen.w, rms);
     float left = -radius - 0.5;
     float right = radius + 0.5;
@@ -92,7 +96,7 @@ Fragment vertexMain(uint vertex : SV_VulkanVertexID, uint column : SV_VulkanInst
 float4 fragmentMain(Fragment fragment) : SV_Target {
     float peakDistance = max(abs(fragment.edge.x) - 0.4 * push.screen.w,
                              max(fragment.bounds.x - fragment.edge.y, fragment.edge.y - fragment.bounds.y));
-    float bodyDistance = length(float2(fragment.edge.x, max(abs(fragment.edge.y) - fragment.energy, 0))) - 0.84 * push.screen.w;
+    float bodyDistance = length(float2(fragment.edge.x, max(abs(fragment.edge.y) - fragment.energy, 0))) - (push.screen.z == 1 ? 0.55 : 0.84) * push.screen.w;
     float body = saturate(0.5 - bodyDistance);
     // Linear-light blending needs a low opacity to keep the peak stems subdued.
     float peak = saturate(0.5 - peakDistance) * 0.06;
