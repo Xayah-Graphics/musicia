@@ -43,17 +43,39 @@ export namespace editor {
         bool loading{}, loaded{}, expanded{}, dropActive{}, acceptsDrop{}, restorePlayback{};
         float width{448}, height{274};
         bool follow{true}, hovering{}, dragMoved{};
-        float hoverX{}, hoverY{}, dragX{};
+        float hoverX{}, hoverY{}, dragX{}, dragY{}, dragHeight{}, waveHeight{144};
         double dragFrame{}, dragFirst{}, dragCount{};
-        enum struct Drag { none, seek, pan, overview, view, left, right };
+        enum struct Drag { none, seek, pan, height, overview, view, left, right };
         Drag drag{Drag::none};
-        Rect content, waveform, overview;
+        Rect content, waveform, overview, waveDivider, melody;
         std::array<Rect, 3> lanes;
+        std::array<Rect, 2> melodyTabs;
+        int melodyTrack{};
+        struct ChordSegment {
+            double start{}, end{};
+            std::wstring name, numeral;
+        };
+        std::vector<ChordSegment> chordSegments;
+        struct MelodyPassage {
+            double start{}, end{};
+            std::array<float, 2> low{std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity()};
+            std::array<float, 2> high{-std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
+            std::array<std::wstring, 14> labels;
+        };
+        std::vector<MelodyPassage> melodyPassages;
+        struct MelodyNote {
+            std::size_t source{}, passage{};
+            double start{}, end{};
+            float row{};
+            bool inScale{};
+            std::wstring name, label;
+        };
+        std::vector<MelodyNote> melodyNotes;
 
         void layout();
         void refresh();
         void render();
-        void moveDrag(float x);
+        void moveDrag(float x, float y);
         void finishDrag(bool commit = false);
         LRESULT message(UINT message, WPARAM wparam, LPARAM lparam);
         static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam);

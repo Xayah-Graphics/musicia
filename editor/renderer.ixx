@@ -16,12 +16,20 @@ export namespace editor {
         float r{}, g{}, b{}, a{1};
     };
 
-    inline constexpr Color background{16 / 255.f, 17 / 255.f, 19 / 255.f, 1};
-    inline constexpr Color foreground{227 / 255.f, 229 / 255.f, 232 / 255.f, 1};
-    inline constexpr Color muted{133 / 255.f, 138 / 255.f, 147 / 255.f, 1};
-    inline constexpr Color waveformColor{199 / 255.f, 209 / 255.f, 220 / 255.f, 1};
-    inline constexpr Color accent{157 / 255.f, 207 / 255.f, 1, 1};
-    inline constexpr Color ruleColor{40 / 255.f, 43 / 255.f, 48 / 255.f, 1};
+    inline constexpr Color background{0, 0, 0, 1};
+    inline constexpr Color foreground{246 / 255.f, 247 / 255.f, 249 / 255.f, 1};
+    inline constexpr Color muted{160 / 255.f, 166 / 255.f, 175 / 255.f, 1};
+    inline constexpr Color waveformColor{236 / 255.f, 241 / 255.f, 245 / 255.f, 1};
+    inline constexpr Color noteColor{211 / 255.f, 223 / 255.f, 231 / 255.f, 1};
+    inline constexpr Color accent{156 / 255.f, 220 / 255.f, 1, 1};
+    inline constexpr Color surfaceColor{11 / 255.f, 14 / 255.f, 17 / 255.f, 1};
+    inline constexpr Color activeSurface{17 / 255.f, 24 / 255.f, 28 / 255.f, 1};
+    inline constexpr Color hoverSurface{28 / 255.f, 40 / 255.f, 46 / 255.f, 1};
+    inline constexpr Color ruleColor{37 / 255.f, 43 / 255.f, 48 / 255.f, 1};
+    inline constexpr Color barGrid{52 / 255.f, 53 / 255.f, 54 / 255.f, 1};
+    inline constexpr Color beatGrid{32 / 255.f, 32 / 255.f, 32 / 255.f, 1};
+    inline constexpr Color eighthGrid{18 / 255.f, 18 / 255.f, 18 / 255.f, 1};
+    inline constexpr Color sixteenthGrid{10 / 255.f, 10 / 255.f, 10 / 255.f, 1};
 
     struct Rect {
         float x{}, y{}, width{}, height{};
@@ -56,7 +64,7 @@ export namespace editor {
         std::vector<Vertex> vertices;
         std::uint32_t waveLayer{};
         Rect waveRect, overviewRect;
-        double waveFirst{}, waveCount{1};
+        double waveFirst{}, waveCount{1}, wavePosition{};
         bool showWave{};
 
         explicit Renderer(HWND window);

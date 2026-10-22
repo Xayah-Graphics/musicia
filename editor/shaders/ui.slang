@@ -5,6 +5,7 @@ struct Push {
     uint4 track;
     float4 screen;
     float4 color;
+    float playhead;
 };
 [[vk::push_constant]] Push push;
 [[vk::binding(0)]] Texture2D<float> glyphAtlas;

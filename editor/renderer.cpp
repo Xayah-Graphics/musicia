@@ -19,6 +19,7 @@ namespace editor {
         std::array<std::uint32_t, 4> track{};
         std::array<float, 4> screen{};
         std::array<float, 4> color{};
+        float playhead{};
     };
 
     Buffer::Buffer(const vk::raii::PhysicalDevice& physical, const vk::raii::Device& device, vk::DeviceSize size, vk::BufferUsageFlags usage) {
@@ -269,6 +270,7 @@ namespace editor {
                 push.data = {static_cast<std::uint32_t>(first), 0, 0, rawOffset};
                 push.track = {channels, 0, frames, 0};
                 push.screen[2] = overview ? 1.f : 0.f;
+                push.playhead = static_cast<float>((area.x + (wavePosition - first) / count * area.width) * scale);
                 for (std::size_t level = 0; level < peakBlocks.size() && peakBlocks[level] <= push.view[0] / 4; ++level) {
                     push.data[1] = peakOffsets[level];
                     push.data[2] = peakBlocks[level];
