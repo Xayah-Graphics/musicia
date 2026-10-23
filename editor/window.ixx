@@ -6,12 +6,12 @@ module;
 export module editor.window;
 
 import std;
-import music.audio;
+import musicia.audio;
 import editor.renderer;
 import editor.timeline;
 import editor.playback;
-import music.analysis;
-import music.sheetsage2;
+import musicia.analysis;
+import musicia.sheetsage2;
 
 export namespace editor {
     struct Window final : IDropTarget {
@@ -28,13 +28,13 @@ export namespace editor {
         Playback audio;
         Timeline timeline;
         std::optional<Renderer> renderer;
-        std::future<music::AudioClip> loadingClip;
-        std::optional<music::SheetSage2> model;
-        std::future<music::Analysis> analyzing;
+        std::future<musicia::AudioClip> loadingClip;
+        std::optional<musicia::SheetSage2> model;
+        std::future<musicia::Analysis> analyzing;
         std::stop_source analysisStop;
         std::shared_ptr<const std::vector<float>> analysisSamples;
-        std::optional<music::Analysis> analysis;
-        music::AnalysisProgress progress;
+        std::optional<musicia::Analysis> analysis;
+        musicia::AnalysisProgress progress;
         std::wstring analysisError;
         bool analysisPending{};
         std::filesystem::path loadingPath;

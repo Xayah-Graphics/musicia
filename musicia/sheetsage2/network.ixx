@@ -6,11 +6,11 @@ module;
 #include <cufft.h>
 #include <cudnn_frontend.h>
 
-export module music.sheetsage2.network;
+export module musicia.sheetsage2.network;
 
 import std;
 
-export namespace music::sheetsage2 {
+export namespace musicia::sheetsage2 {
     struct Weight {
         float* fp32{};
         __nv_bfloat16* bf16{};

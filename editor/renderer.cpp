@@ -8,7 +8,7 @@ module editor.renderer;
 
 import std;
 import vulkan;
-import music.audio;
+import musicia.audio;
 import editor.waveform;
 
 namespace editor {
@@ -39,7 +39,7 @@ namespace editor {
     Renderer::Renderer(HWND window)
         : window(window),
           atlasPixels(2048 * 2048) {
-        const vk::ApplicationInfo app{.pApplicationName = "Music", .applicationVersion = 1, .pEngineName = "Music", .apiVersion = vk::ApiVersion14};
+        const vk::ApplicationInfo app{.pApplicationName = "Musicia", .applicationVersion = 1, .pEngineName = "Musicia", .apiVersion = vk::ApiVersion14};
         const std::array extensions{"VK_KHR_surface", "VK_KHR_win32_surface"};
         instance      = vk::raii::Instance(context, {.pApplicationInfo = &app, .enabledExtensionCount = static_cast<std::uint32_t>(extensions.size()), .ppEnabledExtensionNames = extensions.data()});
         surface       = vk::raii::SurfaceKHR(instance, vk::Win32SurfaceCreateInfoKHR{.hinstance = GetModuleHandleW(nullptr), .hwnd = window});
@@ -149,7 +149,7 @@ namespace editor {
         }
     }
 
-    void Renderer::upload(const music::AudioClip& clip) {
+    void Renderer::upload(const musicia::AudioClip& clip) {
         const auto peaks = waveform(clip);
         device.waitIdle();
         channels = clip.channels;

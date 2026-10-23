@@ -1,7 +1,7 @@
 import std;
-import music.audio;
-import music.analysis;
-import music.sheetsage2;
+import musicia.audio;
+import musicia.analysis;
+import musicia.sheetsage2;
 
 #ifdef _WIN32
 int wmain(int argc, wchar_t** argv) {
@@ -9,11 +9,11 @@ int wmain(int argc, wchar_t** argv) {
 int main(int argc, char** argv) {
 #endif
     try {
-        const auto clip = music::AudioClip::read(std::filesystem::path(argv[1]));
+        const auto clip = musicia::AudioClip::read(std::filesystem::path(argv[1]));
         std::println("Audio: {} Hz, {} channels, {:.3f} seconds", clip.sampleRate, clip.channels, static_cast<double>(clip.frames) / clip.sampleRate);
-        const auto directory = argc > 3 ? std::filesystem::path(argv[3]) : std::filesystem::path(MUSIC_MODEL_DIRECTORY);
-        music::SheetSage2 model(directory);
-        music::AnalysisProgress progress;
+        const auto directory = argc > 3 ? std::filesystem::path(argv[3]) : std::filesystem::path(MUSICIA_MODEL_DIRECTORY);
+        musicia::SheetSage2 model(directory);
+        musicia::AnalysisProgress progress;
         const auto result = model.analyze(clip.analysis, progress);
         result.save(std::filesystem::path(argv[2]));
         std::println("Analysis: {:.3f} s; {:.3f} BPM; {} beats; {} chord intervals; {} notes", result.elapsed, result.bpm, result.beats.size(), result.chords.size(), result.notes.size());

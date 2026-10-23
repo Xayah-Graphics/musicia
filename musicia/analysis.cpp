@@ -1,8 +1,8 @@
-module music.analysis;
+module musicia.analysis;
 
 import std;
 
-namespace music {
+namespace musicia {
     void Analysis::save(const std::filesystem::path& directory) const {
         std::filesystem::create_directories(directory);
         std::ofstream json(directory / "analysis.json");

@@ -1,10 +1,10 @@
-module music.sheetsage2;
+module musicia.sheetsage2;
 
 import std;
-import music.analysis;
-import music.sheetsage2.network;
+import musicia.analysis;
+import musicia.sheetsage2.network;
 
-namespace music {
+namespace musicia {
     struct Event {
         int step{}, globalStep{};
         double time{};

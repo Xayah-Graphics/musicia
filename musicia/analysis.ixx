@@ -1,8 +1,8 @@
-export module music.analysis;
+export module musicia.analysis;
 
 import std;
 
-export namespace music {
+export namespace musicia {
     struct Beat {
         double time{};
         int position{}, numerator{}, denominator{};

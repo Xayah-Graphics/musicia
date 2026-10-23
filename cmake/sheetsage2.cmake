@@ -11,12 +11,12 @@ if(CMAKE_SCRIPT_MODE_FILE)
         EXPECTED_HASH SHA256=e6dd2ab187d6dd62b6521cd7d8f932e237acf0c5757745a7232082e28391350d
         TLS_VERIFY ON SHOW_PROGRESS)
 else()
-    set(MUSIC_MODEL_DIRECTORY "${PROJECT_SOURCE_DIR}/assets" CACHE PATH "Directory containing the official model weights")
+    set(MUSICIA_MODEL_DIRECTORY "${PROJECT_SOURCE_DIR}/assets" CACHE PATH "Directory containing the official model weights")
     add_custom_command(
-        OUTPUT "${MUSIC_MODEL_DIRECTORY}/sheetsage2.safetensors" "${MUSIC_MODEL_DIRECTORY}/mert.safetensors"
-        COMMAND ${CMAKE_COMMAND} "-DOUTPUT_DIRECTORY=${MUSIC_MODEL_DIRECTORY}" -P "${CMAKE_CURRENT_LIST_FILE}"
+        OUTPUT "${MUSICIA_MODEL_DIRECTORY}/sheetsage2.safetensors" "${MUSICIA_MODEL_DIRECTORY}/mert.safetensors"
+        COMMAND ${CMAKE_COMMAND} "-DOUTPUT_DIRECTORY=${MUSICIA_MODEL_DIRECTORY}" -P "${CMAKE_CURRENT_LIST_FILE}"
         DEPENDS "${CMAKE_CURRENT_LIST_FILE}"
         COMMENT "Download the pinned official SheetSage2 and MERT safetensors"
         USES_TERMINAL VERBATIM)
-    add_custom_target(sheetsage2_weights DEPENDS "${MUSIC_MODEL_DIRECTORY}/sheetsage2.safetensors" "${MUSIC_MODEL_DIRECTORY}/mert.safetensors")
+    add_custom_target(sheetsage2_weights DEPENDS "${MUSICIA_MODEL_DIRECTORY}/sheetsage2.safetensors" "${MUSICIA_MODEL_DIRECTORY}/mert.safetensors")
 endif()

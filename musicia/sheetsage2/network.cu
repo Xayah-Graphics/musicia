@@ -1,7 +1,7 @@
 #include "network.cuh"
 #include <math_constants.h>
 
-namespace music::sheetsage2 {
+namespace musicia::sheetsage2 {
     __device__ float rounded(float value) {
         return __bfloat162float(__float2bfloat16_rn(value));
     }

@@ -8,9 +8,9 @@ extern "C" {
 }
 
 import std;
-import music.audio;
+import musicia.audio;
 
-namespace music {
+namespace musicia {
     static void audioError(int status) {
         if (status >= 0) return;
         char detail[AV_ERROR_MAX_STRING_SIZE]{};

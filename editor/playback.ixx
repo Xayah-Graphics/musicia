@@ -5,11 +5,11 @@ module;
 export module editor.playback;
 
 import std;
-import music.audio;
+import musicia.audio;
 
 export namespace editor {
     struct Playback {
-        music::AudioClip clip;
+        musicia::AudioClip clip;
         std::atomic<bool> playing{};
         std::atomic<bool> failed{};
         std::string error;
@@ -19,7 +19,7 @@ export namespace editor {
         ~Playback();
         Playback(const Playback&) = delete;
         Playback& operator=(const Playback&) = delete;
-        void open(music::AudioClip next);
+        void open(musicia::AudioClip next);
         void close();
         void seek(std::uint64_t frame);
         std::uint64_t position() const;

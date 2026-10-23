@@ -1,8 +1,8 @@
-export module music.audio;
+export module musicia.audio;
 
 import std;
 
-export namespace music {
+export namespace musicia {
     // The implementation includes FFmpeg's C headers outside a named module.
     extern "C++" struct AudioClip {
         std::filesystem::path path;

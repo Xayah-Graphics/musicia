@@ -9,12 +9,12 @@ module;
 module editor.window;
 
 import std;
-import music.audio;
+import musicia.audio;
 import editor.renderer;
 import editor.timeline;
 import editor.playback;
-import music.analysis;
-import music.sheetsage2;
+import musicia.analysis;
+import musicia.sheetsage2;
 
 namespace editor {
     std::wstring timeLabel(double seconds, bool precise) {
@@ -69,8 +69,8 @@ namespace editor {
     }
 
     Window::Window() {
-        const WNDCLASSEXW windowClass{sizeof(WNDCLASSEXW), CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS, procedure, 0, 0, GetModuleHandleW(nullptr), LoadIconW(nullptr, IDI_APPLICATION), LoadCursorW(nullptr, IDC_ARROW), nullptr, nullptr, L"MusicTimelineWindow", nullptr};
-        if (!RegisterClassExW(&windowClass)) throw std::runtime_error("Unable to register the music window.");
+        const WNDCLASSEXW windowClass{sizeof(WNDCLASSEXW), CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS, procedure, 0, 0, GetModuleHandleW(nullptr), LoadIconW(nullptr, IDI_APPLICATION), LoadCursorW(nullptr, IDC_ARROW), nullptr, nullptr, L"MusiciaTimelineWindow", nullptr};
+        if (!RegisterClassExW(&windowClass)) throw std::runtime_error("Unable to register the Musicia window.");
         POINT cursor{};
         GetCursorPos(&cursor);
         MONITORINFO monitor{sizeof(MONITORINFO)};
@@ -78,8 +78,8 @@ namespace editor {
         const float scale = GetDpiForSystem() / 96.f;
         const int w       = static_cast<int>(448 * scale);
         const int h       = static_cast<int>(274 * scale);
-        handle            = CreateWindowExW(WS_EX_APPWINDOW, windowClass.lpszClassName, L"Music", WS_POPUP | WS_THICKFRAME, monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - w) / 2, monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - h) / 2, w, h, nullptr, nullptr, windowClass.hInstance, this);
-        if (!handle) throw std::runtime_error("Unable to create the music window.");
+        handle            = CreateWindowExW(WS_EX_APPWINDOW, windowClass.lpszClassName, L"Musicia", WS_POPUP | WS_THICKFRAME, monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - w) / 2, monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - h) / 2, w, h, nullptr, nullptr, windowClass.hInstance, this);
+        if (!handle) throw std::runtime_error("Unable to create the Musicia window.");
         constexpr DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_ROUND;
         DwmSetWindowAttribute(handle, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
         constexpr BOOL dark = TRUE;
@@ -125,7 +125,7 @@ namespace editor {
         loading = true;
         error.clear();
         loadingPath = std::move(path);
-        loadingClip = std::async(std::launch::async, [path = loadingPath] { return music::AudioClip::read(path); });
+        loadingClip = std::async(std::launch::async, [path = loadingPath] { return musicia::AudioClip::read(path); });
         if (!expanded) {
             expanded = true;
             MONITORINFO monitor{sizeof(MONITORINFO)};
@@ -437,14 +437,14 @@ namespace editor {
                     hoverLabel = std::format(L"{}   ·   {}   ·   {}", hoveredNote->label, hoveredNote->name, note.track == 0 ? L"Vocal" : L"Instrumental");
                     hoverRange = std::format(L"{} — {}   ·   {:.3f} s", timeLabel(note.start, true), timeLabel(note.end, true), note.end - note.start);
                 }
-                const auto beat = std::ranges::upper_bound(analysis->beats, seconds, {}, &music::Beat::time);
+                const auto beat = std::ranges::upper_bound(analysis->beats, seconds, {}, &musicia::Beat::time);
                 const auto& meter = beat == analysis->beats.begin() ? analysis->beats.front() : *std::prev(beat);
                 draw.text(std::format(L"{:.1f} BPM   ·   {} / {}", analysis->bpm, meter.numerator, meter.denominator), 10, 32, 53, muted, width - 64);
                 draw.text(context, 10, content.x, height - 30, muted, content.width - 130);
             } else if (!analysisError.empty()) draw.text(analysisError, 10, 32, 53, {.94f, .65f, .58f, 1}, width - 64);
             else {
                 const auto stage = progress.stage.load();
-                const auto status = stage == music::AnalysisStage::loading ? L"Loading model..." : std::format(L"Analyzing {} / {}", progress.window.load(), progress.windows.load());
+                const auto status = stage == musicia::AnalysisStage::loading ? L"Loading model..." : std::format(L"Analyzing {} / {}", progress.window.load(), progress.windows.load());
                 draw.text(status, 10, 32, 53, muted, width - 64);
             }
 
@@ -643,9 +643,9 @@ namespace editor {
             if (loaded && analysisPending && !analyzing.valid()) {
                 analysisPending = false;
                 analysisStop = std::stop_source{};
-                progress.stage = music::AnalysisStage::loading;
+                progress.stage = musicia::AnalysisStage::loading;
                 analyzing = std::async(std::launch::async, [this, samples = analysisSamples, stop = analysisStop.get_token()] {
-                    if (!model) model.emplace(std::filesystem::path(MUSIC_MODEL_DIRECTORY));
+                    if (!model) model.emplace(std::filesystem::path(MUSICIA_MODEL_DIRECTORY));
                     return model->analyze(*samples, progress, stop);
                 });
             }

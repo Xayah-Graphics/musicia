@@ -9,7 +9,7 @@ module;
 module editor.playback;
 
 import std;
-import music.audio;
+import musicia.audio;
 
 namespace editor {
     void playbackError(HRESULT status) {
@@ -20,7 +20,7 @@ namespace editor {
         close();
     }
 
-    void Playback::open(music::AudioClip next) {
+    void Playback::open(musicia::AudioClip next) {
         close();
         clip = std::move(next);
         cursor = 0;

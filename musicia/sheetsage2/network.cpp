@@ -4,11 +4,11 @@ module;
 #include <cublasLt.h>
 #include <cudnn_frontend.h>
 
-module music.sheetsage2.network;
+module musicia.sheetsage2.network;
 
 import std;
 
-namespace music::sheetsage2 {
+namespace musicia::sheetsage2 {
     void cudaError(cudaError_t status) {
         if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status));
     }

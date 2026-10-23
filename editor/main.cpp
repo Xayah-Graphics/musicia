@@ -27,7 +27,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     } catch (const std::exception& exception) {
         const std::string message = exception.what();
         const std::wstring wide(message.begin(), message.end());
-        MessageBoxW(nullptr, wide.c_str(), L"Music — Error", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, wide.c_str(), L"Musicia — Error", MB_OK | MB_ICONERROR);
         result = 1;
     }
     OleUninitialize();

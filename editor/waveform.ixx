@@ -1,7 +1,7 @@
 export module editor.waveform;
 
 import std;
-import music.audio;
+import musicia.audio;
 
 export namespace editor {
     struct Peak {
@@ -11,5 +11,5 @@ export namespace editor {
         std::uint64_t blockFrames{};
         std::vector<Peak> values;
     };
-    std::vector<PeakLevel> waveform(const music::AudioClip& clip);
+    std::vector<PeakLevel> waveform(const musicia::AudioClip& clip);
 }

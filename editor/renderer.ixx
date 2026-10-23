@@ -8,7 +8,7 @@ export module editor.renderer;
 
 import std;
 import vulkan;
-import music.audio;
+import musicia.audio;
 import editor.waveform;
 
 export namespace editor {
@@ -72,7 +72,7 @@ export namespace editor {
         Renderer(const Renderer&)            = delete;
         Renderer& operator=(const Renderer&) = delete;
         void resize();
-        void upload(const music::AudioClip& clip);
+        void upload(const musicia::AudioClip& clip);
         void resetFonts();
         void rect(Rect area, Color color, float radius = 0);
         void text(std::wstring_view value, float size, float x, float y, Color color, float width = 2000, bool centered = false, bool fit = false);

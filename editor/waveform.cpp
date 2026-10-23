@@ -1,10 +1,10 @@
 module editor.waveform;
 
 import std;
-import music.audio;
+import musicia.audio;
 
 namespace editor {
-    std::vector<PeakLevel> waveform(const music::AudioClip& clip) {
+    std::vector<PeakLevel> waveform(const musicia::AudioClip& clip) {
         std::vector<PeakLevel> levels;
         levels.push_back({.blockFrames = 64, .values = std::vector<Peak>((clip.frames + 63) / 64 * clip.channels)});
         for (std::uint64_t block = 0; block < (clip.frames + 63) / 64; ++block) {

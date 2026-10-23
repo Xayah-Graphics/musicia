@@ -1,11 +1,11 @@
-#ifndef MUSIC_SHEETSAGE2_NETWORK_CUH
-#define MUSIC_SHEETSAGE2_NETWORK_CUH
+#ifndef MUSICIA_SHEETSAGE2_NETWORK_CUH
+#define MUSICIA_SHEETSAGE2_NETWORK_CUH
 
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
 #include <cufft.h>
 
-namespace music::sheetsage2 {
+namespace musicia::sheetsage2 {
     __global__ void toBfloat(const float* input, __nv_bfloat16* output, int count);
     __global__ void mergeAdapter(float* weight, __nv_bfloat16* reduced, const float* update, int count);
     __global__ void fromBfloat(const __nv_bfloat16* input, float* output, int count);
