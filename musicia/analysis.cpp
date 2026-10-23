@@ -9,17 +9,17 @@ namespace musicia {
         json.exceptions(std::ios::badbit | std::ios::failbit);
         json << std::setprecision(17);
         json << "{\n\"duration\":" << duration << ",\"bpm\":" << bpm << ",\"elapsed\":" << elapsed << ",\n\"beats\":[";
-        std::ofstream beatFile(directory / "beat.lab"), downbeatFile(directory / "downbeat.lab");
-        beatFile.exceptions(std::ios::badbit | std::ios::failbit);
-        downbeatFile.exceptions(std::ios::badbit | std::ios::failbit);
-        beatFile << std::setprecision(17);
-        downbeatFile << std::setprecision(17);
+        std::ofstream beat_file(directory / "beat.lab"), downbeat_file(directory / "downbeat.lab");
+        beat_file.exceptions(std::ios::badbit | std::ios::failbit);
+        downbeat_file.exceptions(std::ios::badbit | std::ios::failbit);
+        beat_file << std::setprecision(17);
+        downbeat_file << std::setprecision(17);
         for (std::size_t i = 0; i < beats.size(); ++i) {
             const auto& beat = beats[i];
             if (i) json << ',';
             json << std::format("[{:.17g},{},{},{}]", beat.time, beat.position, beat.numerator, beat.denominator);
-            beatFile << std::format("{:.17g}\t{}\t{}\t{}\n", beat.time, beat.position, beat.numerator, beat.denominator);
-            if (beat.position == 1) downbeatFile << beat.time << '\n';
+            beat_file << std::format("{:.17g}\t{}\t{}\t{}\n", beat.time, beat.position, beat.numerator, beat.denominator);
+            if (beat.position == 1) downbeat_file << beat.time << '\n';
         }
         json << ']';
         const std::array<std::pair<std::string_view, const std::vector<Interval>*>, 3> tracks{{{"chord", &chords}, {"key", &keys}, {"structure", &sections}}};

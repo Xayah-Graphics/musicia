@@ -36,16 +36,16 @@ export namespace musicia::sheetsage2 {
         std::map<std::string, Weight> weights;
         std::map<std::tuple<int, int, int, bool, bool>, MatrixPlan> matrices;
         std::map<std::tuple<int, int, int, bool>, AttentionPlan> attentions;
-        float *hidden{}, *temporary{}, *inner{}, *query{}, *key{}, *value{}, *attended{}, *mixed{}, *memory{}, *packed{}, *audio{}, *fftInput{}, *power{}, *magnitudes{}, *logits{};
+        float *hidden{}, *temporary{}, *inner{}, *query{}, *key{}, *value{}, *attended{}, *mixed{}, *memory{}, *packed{}, *audio{}, *fft_input{}, *power{}, *magnitudes{}, *logits{};
         cufftComplex* spectrum{};
-        __nv_bfloat16 *matrixInput{}, *attentionQuery{}, *attentionOutput{};
-        std::array<__nv_bfloat16*, 6> selfKey{}, selfValue{}, crossKey{}, crossValue{};
-        __nv_bfloat16 *encoderKey{}, *encoderValue{};
-        void* matrixWorkspace{};
+        __nv_bfloat16 *matrix_input{}, *attention_query{}, *attention_output{};
+        std::array<__nv_bfloat16*, 6> self_key{}, self_value{}, cross_key{}, cross_value{};
+        __nv_bfloat16 *encoder_key{}, *encoder_value{};
+        void* matrix_workspace{};
         int* tokens{};
-        float* hostLogits{};
+        float* host_logits{};
         int cached{};
-        std::array<float, 25> layerWeights{};
+        std::array<float, 25> layer_weights{};
 
         explicit Network(const std::filesystem::path& directory);
         ~Network();
@@ -54,7 +54,7 @@ export namespace musicia::sheetsage2 {
         void matrix(const float* input, const std::string& weight, float* output, int rows, int columns, int width, bool reduced = true, bool transpose = true);
         void linear(const float* input, const std::string& name, float* output, int rows, int width, int columns);
         void norm(const float* input, const std::string& name, float* output, int rows, int width, float epsilon = 1e-5f);
-        void attention(const float* q, __nv_bfloat16* k, __nv_bfloat16* v, float* output, int heads, int qCount, int kCount, bool causal = false, bool padded = false);
+        void attention(const float* q, __nv_bfloat16* k, __nv_bfloat16* v, float* output, int heads, int q_count, int k_count, bool causal = false, bool padded = false);
         void encode(const float* samples, int count);
         void decode(const int* input, int count);
         void synchronize();

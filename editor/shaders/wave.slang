@@ -18,36 +18,36 @@ struct Fragment {
 };
 
 [shader("vertex")]
-Fragment vertexMain(uint vertex : SV_VulkanVertexID, uint column : SV_VulkanInstanceID) {
-    float localFirst = push.view.y + column * push.view.x;
-    uint first = min(push.data.x + uint(floor(localFirst)), push.track.z - 1);
-    uint last = min(push.data.x + uint(ceil(localFirst + push.view.x)), push.track.z);
+Fragment vertex_main(uint vertex : SV_VulkanVertexID, uint column : SV_VulkanInstanceID) {
+    float local_first = push.view.y + column * push.view.x;
+    uint first = min(push.data.x + uint(floor(local_first)), push.track.z - 1);
+    uint last = min(push.data.x + uint(ceil(local_first + push.view.x)), push.track.z);
     float low = 1e30;
     float high = -1e30;
-    float squareSum = 0;
-    uint sampleCount = 0;
-    uint channelFirst = push.screen.z == 1 ? 0 : push.track.y;
-    uint channelEnd = push.screen.z == 1 ? push.track.x : push.track.y + 1;
-    for (uint channel = channelFirst; channel < channelEnd; ++channel) {
+    float square_sum = 0;
+    uint sample_count = 0;
+    uint channel_first = push.screen.z == 1 ? 0 : push.track.y;
+    uint channel_end = push.screen.z == 1 ? push.track.x : push.track.y + 1;
+    for (uint channel = channel_first; channel < channel_end; ++channel) {
         if (push.data.z == 0) {
             if (push.view.x < 1.0) {
                 float a = samples[push.data.w + first * push.track.x + channel];
                 float b = samples[push.data.w + min(first + 1, push.track.z - 1) * push.track.x + channel];
-                float value = lerp(a, b, frac(localFirst));
-                uint endFrame = min(push.data.x + uint(floor(localFirst + push.view.x)), push.track.z - 1);
-                float endA = samples[push.data.w + endFrame * push.track.x + channel];
-                float endB = samples[push.data.w + min(endFrame + 1, push.track.z - 1) * push.track.x + channel];
-                float next = lerp(endA, endB, frac(localFirst + push.view.x));
+                float value = lerp(a, b, frac(local_first));
+                uint end_frame = min(push.data.x + uint(floor(local_first + push.view.x)), push.track.z - 1);
+                float end_a = samples[push.data.w + end_frame * push.track.x + channel];
+                float end_b = samples[push.data.w + min(end_frame + 1, push.track.z - 1) * push.track.x + channel];
+                float next = lerp(end_a, end_b, frac(local_first + push.view.x));
                 low = min(low, min(value, next));
                 high = max(high, max(value, next));
-                if (endFrame > first) { low = min(low, b); high = max(high, b); }
+                if (end_frame > first) { low = min(low, b); high = max(high, b); }
             } else {
                 for (uint frame = first; frame < max(first + 1, last); ++frame) {
                     float value = samples[push.data.w + frame * push.track.x + channel];
                     low = min(low, value);
                     high = max(high, value);
-                    squareSum += value * value;
-                    ++sampleCount;
+                    square_sum += value * value;
+                    ++sample_count;
                 }
             }
         } else {
@@ -58,8 +58,8 @@ Fragment vertexMain(uint vertex : SV_VulkanVertexID, uint column : SV_VulkanInst
                 low = min(low, samples[offset]);
                 high = max(high, samples[offset + 1]);
                 uint count = min(last, (block + 1) * push.data.z) - max(first, block * push.data.z);
-                squareSum += samples[offset + 2] * count;
-                sampleCount += count;
+                square_sum += samples[offset + 2] * count;
+                sample_count += count;
             }
         }
     }
@@ -67,7 +67,7 @@ Fragment vertexMain(uint vertex : SV_VulkanVertexID, uint column : SV_VulkanInst
     float amplitude = push.rect.w * 0.4;
     float top = -clamp(high, -1.0, 1.0) * amplitude;
     float bottom = -clamp(low, -1.0, 1.0) * amplitude;
-    float rms = sampleCount > 0 ? sqrt(squareSum / sampleCount) * amplitude : 0;
+    float rms = sample_count > 0 ? sqrt(square_sum / sample_count) * amplitude : 0;
     float radius = (push.screen.z == 1 ? 0.55 : 0.84) * push.screen.w;
     float energy = max(0.4 * push.screen.w, rms);
     float left = -radius - 0.5;
@@ -94,13 +94,12 @@ Fragment vertexMain(uint vertex : SV_VulkanVertexID, uint column : SV_VulkanInst
 }
 
 [shader("fragment")]
-float4 fragmentMain(Fragment fragment) : SV_Target {
-    float peakDistance = max(abs(fragment.edge.x) - 0.4 * push.screen.w,
+float4 fragment_main(Fragment fragment) : SV_Target {
+    float peak_distance = max(abs(fragment.edge.x) - 0.4 * push.screen.w,
                              max(fragment.bounds.x - fragment.edge.y, fragment.edge.y - fragment.bounds.y));
-    float bodyDistance = length(float2(fragment.edge.x, max(abs(fragment.edge.y) - fragment.energy, 0))) - (push.screen.z == 1 ? 0.55 : 0.84) * push.screen.w;
-    float body = saturate(0.5 - bodyDistance);
-    // Linear-light blending needs a low opacity to keep the peak stems subdued.
-    float peak = saturate(0.5 - peakDistance) * 0.06;
+    float body_distance = length(float2(fragment.edge.x, max(abs(fragment.edge.y) - fragment.energy, 0))) - (push.screen.z == 1 ? 0.55 : 0.84) * push.screen.w;
+    float body = saturate(0.5 - body_distance);
+    float peak = saturate(0.5 - peak_distance) * 0.06;
     float alpha = body + peak * (1 - body);
     if (push.view.w != 0) alpha = saturate(min(fragment.edge.y - fragment.bounds.x, fragment.bounds.y - fragment.edge.y) + 0.5) * 0.86;
     float3 color = push.color.rgb;

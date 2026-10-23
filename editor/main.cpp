@@ -22,7 +22,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
-        if (!window.fatalError.empty()) throw std::runtime_error(window.fatalError);
+        if (!window.fatal_error.empty()) throw std::runtime_error(window.fatal_error);
         result = static_cast<int>(message.wParam);
     } catch (const std::exception& exception) {
         const std::string message = exception.what();

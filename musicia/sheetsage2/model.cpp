@@ -6,7 +6,7 @@ import musicia.sheetsage2.network;
 
 namespace musicia {
     struct Event {
-        int step{}, globalStep{};
+        int step{}, global_step{};
         double time{};
         std::array<std::vector<int>, 6> fields;
         std::vector<Note> notes;
@@ -64,7 +64,7 @@ namespace musicia {
         const std::array<std::string, 15> qualities{"maj", "min", "dim", "aug", "maj7", "min7", "7", "hdim7", "dim7", "minmaj7", "sus2", "sus4", "sus4(b7)", "maj6", "min6"};
         const std::array<std::vector<int>, 15> fifths{{{0, 4, 1}, {0, -3, 1}, {0, -3, -6}, {0, 4, 8}, {0, 4, 1, 5}, {0, -3, 1, -2}, {0, 4, 1, -2}, {0, -3, -6, -2}, {0, -3, -6, -9}, {0, -3, 1, 5}, {0, 2, 1}, {0, -1, 1}, {0, -1, 1, -2}, {0, 4, 1, 3}, {0, -3, 1, 3}}};
         constexpr std::array<int, 7> natural{0, 2, 4, 5, 7, 9, 11}, circle{1, 3, 5, 0, 2, 4, 6};
-        constexpr std::array<int, 12> majorFifths{1, -4, 3, -2, 5, 0, 7, 2, -3, 4, -1, 6};
+        constexpr std::array<int, 12> major_fifths{1, -4, 3, -2, 5, 0, 7, 2, -3, 4, -1, 6};
         constexpr std::string_view letters = "CDEFGAB";
         for (const auto& root : major) keys.push_back(root + ":major");
         for (const auto& root : minor) keys.push_back(root + ":minor");
@@ -72,7 +72,7 @@ namespace musicia {
         chords.push_back("N");
         for (int tonal = 0; tonal < 24; ++tonal) {
             spellings.push_back("N");
-            const int keyPosition = majorFifths[(tonal % 12 + (tonal >= 12 ? 3 : 0)) % 12];
+            const int key_position = major_fifths[(tonal % 12 + (tonal >= 12 ? 3 : 0)) % 12];
             for (int quality = 0; quality < 15; ++quality) {
                 std::vector<std::string> inversions;
                 if (quality == 0) inversions = {"/2", "/3", "/5"};
@@ -86,8 +86,8 @@ namespace musicia {
                     for (int letter = 0; letter < 7; ++letter) {
                         const int accidental = (root - natural[letter] + 18) % 12 - 6;
                         const int position = circle[letter] + accidental * 7;
-                        int score = std::max(0, std::abs(position - keyPosition - 2) - 3);
-                        for (const int tone : fifths[quality]) score += std::max(0, std::abs(position + tone - keyPosition - 2) - 3);
+                        int score = std::max(0, std::abs(position - key_position - 2) - 3);
+                        for (const int tone : fifths[quality]) score += std::max(0, std::abs(position + tone - key_position - 2) - 3);
                         if (score < lowest) { lowest = score; best = letter; }
                     }
                     const int accidental = (root - natural[best] + 18) % 12 - 6;
@@ -128,11 +128,11 @@ namespace musicia {
                 std::vector<Event> prefix;
                 for (const auto& event : stitched)
                     if (event.time >= window.start - 1e-4 && event.time < window.accepted - 1e-4) prefix.push_back(event);
-                std::ranges::sort(prefix, [](const Event& a, const Event& b) { return std::tie(a.globalStep, a.time) < std::tie(b.globalStep, b.time); });
+                std::ranges::sort(prefix, [](const Event& a, const Event& b) { return std::tie(a.global_step, a.time) < std::tie(b.global_step, b.time); });
                 const auto first = std::ranges::find_if(prefix, [](const Event& event) { return !event.fields[0].empty() || !event.fields[1].empty(); });
                 prefix.erase(prefix.begin(), first);
                 if (prefix.empty()) throw std::runtime_error("No musical context for the next analysis window.");
-                base = prefix.front().globalStep;
+                base = prefix.front().global_step;
                 std::array<std::vector<int>, 6> context;
                 int meter = -1;
                 for (const auto& event : stitched) {
@@ -145,7 +145,7 @@ namespace musicia {
                 if (!rhythm.empty() && rhythm.front() >= 30709 && meter >= 0) rhythm.insert(rhythm.begin(), meter);
                 int previous = 0;
                 for (auto& event : prefix) {
-                    event.step = std::max(0, event.globalStep - base);
+                    event.step = std::max(0, event.global_step - base);
                     if (!event.fields[0].empty()) event.fields[0] = {517 + std::clamp(static_cast<int>(std::nearbyint((event.time - window.start) * 100)), 0, 29999)};
                     int shift = event.step - previous;
                     while (shift > 256) { tokens.push_back(516); shift -= 256; }
@@ -163,14 +163,14 @@ namespace musicia {
             if (stop.stop_requested()) throw std::runtime_error("Analysis cancelled.");
             progress.stage = AnalysisStage::decoding;
             network.decode(tokens.data(), static_cast<int>(tokens.size()));
-            const double stopTime = window.last ? std::min(300.0, result.duration - window.start) : 200.0;
+            const double stop_time = window.last ? std::min(300.0, result.duration - window.start) : 200.0;
             while (tokens.size() < 5120) {
                 if (stop.stop_requested()) throw std::runtime_error("Analysis cancelled.");
                 int selected = -1;
                 float largest = -std::numeric_limits<float>::infinity();
                 for (int token = 0; token < 31678; ++token) {
-                    if (grammar.allows(token) && network.hostLogits[token] > largest) {
-                        largest = network.hostLogits[token];
+                    if (grammar.allows(token) && network.host_logits[token] > largest) {
+                        largest = network.host_logits[token];
                         selected = token;
                     }
                 }
@@ -179,7 +179,7 @@ namespace musicia {
                 grammar.update(selected);
                 progress.tokens = static_cast<int>(tokens.size());
                 if (selected == 2) break;
-                if (selected >= 517 && selected < 30517 && (selected - 517) / 100.0 >= stopTime) {
+                if (selected >= 517 && selected < 30517 && (selected - 517) / 100.0 >= stop_time) {
                     tokens.push_back(2);
                     break;
                 }
@@ -191,7 +191,7 @@ namespace musicia {
             int step = 0;
             for (std::size_t i = 8; i < tokens.size() && tokens[i] != 2;) {
                 while (tokens[i] >= 260 && tokens[i] < 517) step += tokens[i++] - 260;
-                Event event{.step = step, .globalStep = base + step};
+                Event event{.step = step, .global_step = base + step};
                 while (i < tokens.size() && tokens[i] != 2 && !(tokens[i] >= 260 && tokens[i] < 517)) {
                     const int token = tokens[i++];
                     const int field = token < 30517 ? 0 : token < 30965 ? 1 : token < 30988 ? 2 : token < 31012 ? 3 : token < 31398 ? 4 : 5;
@@ -207,7 +207,7 @@ namespace musicia {
             std::ranges::sort(periods);
             const double period = (periods[(periods.size() - 1) / 2] + periods[periods.size() / 2]) * .5;
             if (period <= 0) throw std::runtime_error("SheetSage2 produced a non-increasing musical time map.");
-            const auto timeAt = [&anchors, period](int position) {
+            const auto time_at = [&anchors, period](int position) {
                 const auto next = anchors.lower_bound(position);
                 if (next == anchors.begin()) return std::clamp(next->second + (position - next->first) * period, 0.0, 300.0);
                 if (next == anchors.end()) return std::clamp(std::prev(next)->second + (position - std::prev(next)->first) * period, 0.0, 300.0);
@@ -215,18 +215,18 @@ namespace musicia {
                 return previous->second + static_cast<double>(position - previous->first) / (next->first - previous->first) * (next->second - previous->second);
             };
             for (auto& event : events) {
-                event.time = window.start + timeAt(event.step);
+                event.time = window.start + time_at(event.step);
                 if (event.time < window.accepted - 1e-4 || event.time >= window.end - 1e-4 || event.time >= result.duration - 1e-4) continue;
                 const auto& melody = event.fields[5];
                 for (std::size_t i = 0; i < melody.size();) {
                     const int pitch = melody[i++] - 31398;
                     const int duration = i < melody.size() && melody[i] >= 31654 ? melody[i++] - 31654 : 0;
-                    event.notes.push_back({event.time, std::min(result.duration, std::max(event.time + .04, window.start + timeAt(event.step + durations[duration]))), pitch % 128, pitch / 128});
+                    event.notes.push_back({event.time, std::min(result.duration, std::max(event.time + .04, window.start + time_at(event.step + durations[duration]))), pitch % 128, pitch / 128});
                 }
                 stitched.push_back(std::move(event));
             }
         }
-        std::ranges::sort(stitched, [](const Event& a, const Event& b) { return std::tie(a.time, a.globalStep) < std::tie(b.time, b.globalStep); });
+        std::ranges::sort(stitched, [](const Event& a, const Event& b) { return std::tie(a.time, a.global_step) < std::tie(b.time, b.global_step); });
         int numerator = 0, denominator = 0;
         for (const auto& event : stitched) {
             for (const int token : event.fields[1]) {
@@ -251,9 +251,9 @@ namespace musicia {
         for (auto& chord : result.chords) {
             const double middle = (chord.start + chord.end) * .5;
             const auto key = std::ranges::lower_bound(result.keys, middle, {}, &Interval::end);
-            const auto keyIndex = std::ranges::find(keys, (key == result.keys.end() ? result.keys.back() : *key).label) - keys.begin();
-            const auto chordIndex = std::ranges::find(chords, chord.label) - chords.begin();
-            chord.label = spellings[keyIndex * 361 + chordIndex];
+            const auto key_index = std::ranges::find(keys, (key == result.keys.end() ? result.keys.back() : *key).label) - keys.begin();
+            const auto chord_index = std::ranges::find(chords, chord.label) - chords.begin();
+            chord.label = spellings[key_index * 361 + chord_index];
         }
         std::ranges::sort(result.notes, [](const Note& a, const Note& b) { return std::tie(a.start, a.end, a.pitch, a.track) < std::tie(b.start, b.end, b.pitch, b.track); });
         std::vector<double> tempi;

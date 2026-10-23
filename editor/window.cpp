@@ -17,13 +17,13 @@ import musicia.analysis;
 import musicia.sheetsage2;
 
 namespace editor {
-    std::wstring timeLabel(double seconds, bool precise) {
+    std::wstring time_label(double seconds, bool precise) {
         const auto hundredths = static_cast<std::uint64_t>(std::max(0.0, seconds) * 100);
         if (precise) return std::format(L"{:02}:{:02}.{:02}", hundredths / 6000, hundredths / 100 % 60, hundredths % 100);
         return std::format(L"{:02}:{:02}", hundredths / 6000, hundredths / 100 % 60);
     }
 
-    std::wstring intervalLabel(std::string_view label, std::size_t lane) {
+    std::wstring interval_label(std::string_view label, std::size_t lane) {
         if (label == "N") return L"—";
         std::wstring text(label.begin(), label.end());
         if (lane == 0) {
@@ -69,8 +69,8 @@ namespace editor {
     }
 
     Window::Window() {
-        const WNDCLASSEXW windowClass{sizeof(WNDCLASSEXW), CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS, procedure, 0, 0, GetModuleHandleW(nullptr), LoadIconW(nullptr, IDI_APPLICATION), LoadCursorW(nullptr, IDC_ARROW), nullptr, nullptr, L"MusiciaTimelineWindow", nullptr};
-        if (!RegisterClassExW(&windowClass)) throw std::runtime_error("Unable to register the Musicia window.");
+        const WNDCLASSEXW window_class{sizeof(WNDCLASSEXW), CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS, procedure, 0, 0, GetModuleHandleW(nullptr), LoadIconW(nullptr, IDI_APPLICATION), LoadCursorW(nullptr, IDC_ARROW), nullptr, nullptr, L"MusiciaTimelineWindow", nullptr};
+        if (!RegisterClassExW(&window_class)) throw std::runtime_error("Unable to register the Musicia window.");
         POINT cursor{};
         GetCursorPos(&cursor);
         MONITORINFO monitor{sizeof(MONITORINFO)};
@@ -78,7 +78,7 @@ namespace editor {
         const float scale = GetDpiForSystem() / 96.f;
         const int w       = static_cast<int>(448 * scale);
         const int h       = static_cast<int>(274 * scale);
-        handle            = CreateWindowExW(WS_EX_APPWINDOW, windowClass.lpszClassName, L"Musicia", WS_POPUP | WS_THICKFRAME, monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - w) / 2, monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - h) / 2, w, h, nullptr, nullptr, windowClass.hInstance, this);
+        handle            = CreateWindowExW(WS_EX_APPWINDOW, window_class.lpszClassName, L"Musicia", WS_POPUP | WS_THICKFRAME, monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - w) / 2, monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - h) / 2, w, h, nullptr, nullptr, window_class.hInstance, this);
         if (!handle) throw std::runtime_error("Unable to create the Musicia window.");
         constexpr DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_ROUND;
         DwmSetWindowAttribute(handle, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
@@ -96,7 +96,7 @@ namespace editor {
     }
 
     Window::~Window() {
-        analysisStop.request_stop();
+        analysis_stop.request_stop();
         if (analyzing.valid()) analyzing.wait();
         audio.close();
         renderer.reset();
@@ -105,27 +105,27 @@ namespace editor {
 
     void Window::load(std::filesystem::path path) {
         if (loading) {
-            pendingPath = std::move(path);
+            pending_path = std::move(path);
             return;
         }
-        finishDrag();
+        finish_drag();
         hovering = false;
         follow = true;
-        analysisStop.request_stop();
+        analysis_stop.request_stop();
         analysis.reset();
-        chordSegments.clear();
-        melodyPassages.clear();
-        melodyNotes.clear();
-        melodyTrack = 0;
-        analysisSamples.reset();
-        analysisPending = false;
-        analysisError.clear();
+        chord_segments.clear();
+        melody_passages.clear();
+        melody_notes.clear();
+        melody_track = 0;
+        analysis_samples.reset();
+        analysis_pending = false;
+        analysis_error.clear();
         audio.close();
         loaded  = false;
         loading = true;
         error.clear();
-        loadingPath = std::move(path);
-        loadingClip = std::async(std::launch::async, [path = loadingPath] { return musicia::AudioClip::read(path); });
+        loading_path = std::move(path);
+        loading_clip = std::async(std::launch::async, [path = loading_path] { return musicia::AudioClip::read(path); });
         if (!expanded) {
             expanded = true;
             MONITORINFO monitor{sizeof(MONITORINFO)};
@@ -147,49 +147,47 @@ namespace editor {
         height           = client.bottom / scale;
         if (!expanded) return;
         content = {132, 88, width - 164, height - 202};
-        waveform = {content.x, content.y + 38, content.width, std::clamp(waveHeight, 80.f, std::max(80.f, height - 606))};
-        waveDivider = {content.x, waveform.y + waveform.height + 3, content.width, 10};
+        waveform = {content.x, content.y + 38, content.width, std::clamp(wave_height, 80.f, std::max(80.f, height - 606))};
+        wave_divider = {content.x, waveform.y + waveform.height + 3, content.width, 10};
         for (std::size_t lane = 0; lane < lanes.size(); ++lane) lanes[lane] = {content.x, waveform.y + waveform.height + 18 + 40.f * lane, content.width, lane == 2 ? 44.f : 30.f};
-        const float melodyTop = lanes.back().y + lanes.back().height + 10;
-        melody = {content.x, melodyTop + 20, content.width, content.y + content.height - melodyTop - 20};
-        for (int track = 0; track < 2; ++track) melodyTabs[track] = {content.x + 76 * track, melodyTop - 2, 64, 20};
+        const float melody_top = lanes.back().y + lanes.back().height + 10;
+        melody = {content.x, melody_top + 20, content.width, content.y + content.height - melody_top - 20};
+        for (int track = 0; track < 2; ++track) melody_tabs[track] = {content.x + 76 * track, melody_top - 2, 64, 20};
         overview = {content.x, height - 96, content.width, 48};
     }
 
-    void Window::rebuildAnalysisView() {
-        chordSegments.clear();
-        chordSegments.reserve(analysis->chords.size());
-        melodyPassages.clear();
-        melodyPassages.reserve(analysis->keys.size());
-        melodyNotes.clear();
-        melodyNotes.reserve(analysis->notes.size());
+    void Window::rebuild_analysis_view() {
+        chord_segments.clear();
+        chord_segments.reserve(analysis->chords.size());
+        melody_passages.clear();
+        melody_passages.reserve(analysis->keys.size());
+        melody_notes.clear();
+        melody_notes.reserve(analysis->notes.size());
         constexpr std::wstring_view letters = L"CDEFGAB";
         constexpr std::array natural{0, 2, 4, 5, 7, 9, 11};
         constexpr std::array solfege{L"Do", L"Re", L"Mi", L"Fa", L"Sol", L"La", L"Si"};
-        constexpr std::array upperNumerals{L"I", L"II", L"III", L"IV", L"V", L"VI", L"VII"};
-        constexpr std::array lowerNumerals{L"i", L"ii", L"iii", L"iv", L"v", L"vi", L"vii"};
+        constexpr std::array upper_numerals{L"I", L"II", L"III", L"IV", L"V", L"VI", L"VII"};
+        constexpr std::array lower_numerals{L"i", L"ii", L"iii", L"iv", L"v", L"vi", L"vii"};
         for (std::size_t key = 0; key < analysis->keys.size(); ++key) {
             auto interval = analysis->keys[key];
             while (key + 1 < analysis->keys.size() && analysis->keys[key + 1].label == interval.label && std::abs(analysis->keys[key + 1].start - interval.end) < .001) interval.end = analysis->keys[++key].end;
-            const auto passageIndex = melodyPassages.size();
-            auto& passage = melodyPassages.emplace_back(MelodyPassage{.start = interval.start, .end = interval.end});
-            const auto rootLetter = letters.find(static_cast<wchar_t>(interval.label.front()));
-            int root = natural[rootLetter];
+            const auto passage_index = melody_passages.size();
+            auto& passage = melody_passages.emplace_back(MelodyPassage{.start = interval.start, .end = interval.end});
+            const auto root_letter = letters.find(static_cast<wchar_t>(interval.label.front()));
+            int root = natural[root_letter];
             for (std::size_t i = 1; i < interval.label.find(':'); ++i) root += interval.label[i] == '#' ? 1 : -1;
-            const bool minorKey = interval.label.ends_with(":minor");
-            const auto scale = minorKey ? std::array{0, 2, 3, 5, 7, 8, 10, 12} : std::array{0, 2, 4, 5, 7, 9, 11, 12};
+            const bool minor_key = interval.label.ends_with(":minor");
+            const auto scale = minor_key ? std::array{0, 2, 3, 5, 7, 8, 10, 12} : std::array{0, 2, 4, 5, 7, 9, 11, 12};
             int signature = 0;
-            for (std::size_t degree = 0; degree < 7; ++degree) signature += ((root + scale[degree] - natural[(rootLetter + degree) % 7]) % 12 + 18) % 12 - 6;
-            // Even rows are scale tones; odd rows hold chromatic tones between them.
+            for (std::size_t degree = 0; degree < 7; ++degree) signature += ((root + scale[degree] - natural[(root_letter + degree) % 7]) % 12 + 18) % 12 - 6;
             for (int semitone = 0; semitone < 12; ++semitone) {
                 const auto degree = static_cast<int>(std::ranges::upper_bound(scale, semitone) - scale.begin()) - 1;
-                const bool inScale = semitone == scale[degree];
-                const int namedDegree = degree + (!inScale && signature < 0 ? 1 : 0);
-                // Major starts on Do, minor on La; Roman degrees remain relative to the tonic.
-                const int solfegeDegree = (namedDegree + (minorKey ? 5 : 0)) % 7;
-                const int alteration = semitone - scale[namedDegree];
+                const bool in_scale = semitone == scale[degree];
+                const int named_degree = degree + (!in_scale && signature < 0 ? 1 : 0);
+                const int solfege_degree = (named_degree + (minor_key ? 5 : 0)) % 7;
+                const int alteration = semitone - scale[named_degree];
                 const std::wstring accidental(std::abs(alteration), alteration < 0 ? L'♭' : L'♯');
-                passage.labels[degree * 2 + (inScale ? 0 : 1)] = std::format(L"{}{} ({}{})", accidental, solfege[solfegeDegree], accidental, upperNumerals[namedDegree % 7]);
+                passage.labels[degree * 2 + (in_scale ? 0 : 1)] = std::format(L"{}{} ({}{})", accidental, solfege[solfege_degree], accidental, upper_numerals[named_degree % 7]);
             }
             for (const auto& chord : analysis->chords) {
                 if (chord.start >= interval.end) break;
@@ -205,12 +203,11 @@ namespace editor {
                     for (std::size_t i = 1; i < colon; ++i) pitch += label[i] == '#' ? 1 : -1;
                     const int chromatic = ((pitch - root) % 12 + 12) % 12;
                     const auto step = std::ranges::find(scale, chromatic);
-                    const auto degree = step != scale.end() ? static_cast<std::size_t>(step - scale.begin()) : (letter + 7 - rootLetter) % 7;
-                    // Alterations are relative to the current major or natural-minor scale.
+                    const auto degree = step != scale.end() ? static_cast<std::size_t>(step - scale.begin()) : (letter + 7 - root_letter) % 7;
                     const int alteration = ((pitch - root - scale[degree]) % 12 + 18) % 12 - 6;
                     const bool minor = quality.starts_with("min") || quality == "dim" || quality == "dim7" || quality == "hdim7";
                     numeral.assign(std::abs(alteration), alteration < 0 ? L'♭' : L'♯');
-                    numeral += (minor ? lowerNumerals : upperNumerals)[degree];
+                    numeral += (minor ? lower_numerals : upper_numerals)[degree];
                     if (quality == "dim" || quality == "dim7") numeral += L"°";
                     else if (quality == "hdim7") numeral += L"ø";
                     else if (quality == "aug") numeral += L"+";
@@ -221,7 +218,7 @@ namespace editor {
                     else if (quality == "sus4(b7)") numeral += L"7sus4";
                     else if (quality == "maj6" || quality == "min6") numeral += L"(add6)";
                 }
-                chordSegments.push_back({std::max(chord.start, interval.start), std::min(chord.end, interval.end), intervalLabel(chord.label, 2), std::move(numeral)});
+                chord_segments.push_back({std::max(chord.start, interval.start), std::min(chord.end, interval.end), interval_label(chord.label, 2), std::move(numeral)});
             }
             for (std::size_t source = 0; source < analysis->notes.size(); ++source) {
                 const auto& note = analysis->notes[source];
@@ -230,15 +227,15 @@ namespace editor {
                 const int octave = static_cast<int>(std::floor((note.pitch - root) / 12.));
                 const int semitone = note.pitch - root - octave * 12;
                 const auto degree = static_cast<int>(std::ranges::upper_bound(scale, semitone) - scale.begin()) - 1;
-                const bool inScale = semitone == scale[degree];
-                const int namedDegree = degree + (!inScale && signature < 0 ? 1 : 0);
-                const auto letter = (rootLetter + namedDegree) % 7;
+                const bool in_scale = semitone == scale[degree];
+                const int named_degree = degree + (!in_scale && signature < 0 ? 1 : 0);
+                const auto letter = (root_letter + named_degree) % 7;
                 const int accidental = (note.pitch - natural[letter] + 18) % 12 - 6;
                 std::wstring name(1, letters[letter]);
                 name += std::wstring(std::abs(accidental), accidental < 0 ? L'♭' : L'♯');
                 name += std::to_wstring((note.pitch - accidental) / 12 - 1);
-                const float row = octave * 7 + degree + (inScale ? 0.f : .5f);
-                melodyNotes.push_back({source, passageIndex, std::max(note.start, interval.start), std::min(note.end, interval.end), row, inScale, std::move(name), passage.labels[degree * 2 + (inScale ? 0 : 1)]});
+                const float row = octave * 7 + degree + (in_scale ? 0.f : .5f);
+                melody_notes.push_back({source, passage_index, std::max(note.start, interval.start), std::min(note.end, interval.end), row, in_scale, std::move(name), passage.labels[degree * 2 + (in_scale ? 0 : 1)]});
                 passage.low[note.track] = std::min(passage.low[note.track], row);
                 passage.high[note.track] = std::max(passage.high[note.track], row);
             }
@@ -246,7 +243,7 @@ namespace editor {
     }
 
     void Window::refresh() {
-        if (loading || audio.playing.load() || analyzing.valid() || analysisPending) SetTimer(handle, 1, 16, nullptr);
+        if (loading || audio.playing.load() || analyzing.valid() || analysis_pending) SetTimer(handle, 1, 16, nullptr);
         else KillTimer(handle, 1);
         InvalidateRect(handle, nullptr, FALSE);
     }
@@ -254,82 +251,81 @@ namespace editor {
     void Window::render() {
         auto& draw = *renderer;
         draw.vertices.clear();
-        draw.showWave = loaded;
-        draw.waveLayer = 0;
+        draw.show_wave = loaded;
+        draw.wave_layer = 0;
         if (!loaded) {
             const auto title = loading ? L"Loading audio..." : error.empty() ? L"Drop an audio file" : L"Unable to open audio";
-            draw.text(title, 15, 32, height / 2 - 11, dropActive ? accent : foreground, width - 64, true);
+            draw.text(title, 15, 32, height / 2 - 11, drop_active ? accent : foreground, width - 64, true);
             if (!error.empty()) draw.text(error, 12, 32, height / 2 + 20, {.94f, .65f, .58f, 1}, width - 64, true);
         } else {
             const auto& clip = audio.clip;
-            const double currentFrame = drag == Drag::seek ? dragFrame : static_cast<double>(audio.position());
-            if (follow && audio.playing.load() && (drag == Drag::none || drag == Drag::height)) timeline.first = std::clamp(currentFrame - timeline.count / 2, 0., static_cast<double>(clip.frames) - timeline.count);
-            const double seconds = currentFrame / clip.sampleRate;
-            const double duration = static_cast<double>(clip.frames) / clip.sampleRate;
-            const double viewStart = timeline.first / clip.sampleRate;
-            const double viewEnd = (timeline.first + timeline.count) / clip.sampleRate;
-            const double pixels = content.width / (viewEnd - viewStart);
+            const double current_frame = drag == Drag::seek ? drag_frame : static_cast<double>(audio.position());
+            if (follow && audio.playing.load() && (drag == Drag::none || drag == Drag::height)) timeline.first = std::clamp(current_frame - timeline.count / 2, 0., static_cast<double>(clip.frames) - timeline.count);
+            const double seconds = current_frame / clip.sample_rate;
+            const double duration = static_cast<double>(clip.frames) / clip.sample_rate;
+            const double view_start = timeline.first / clip.sample_rate;
+            const double view_end = (timeline.first + timeline.count) / clip.sample_rate;
+            const double pixels = content.width / (view_end - view_start);
             const float hairline = 1 / draw.scale;
-            const bool dividerHover = hovering && waveDivider.contains(hoverX, hoverY);
-            const bool tabHover = hovering && (melodyTabs[0].contains(hoverX, hoverY) || melodyTabs[1].contains(hoverX, hoverY));
-            const bool mainHover = hovering && content.contains(hoverX, hoverY) && !dividerHover && !tabHover;
-            const bool overviewHover = hovering && overview.contains(hoverX, hoverY);
-            const double hoverTime = mainHover ? timeline.frame((hoverX - content.x) / content.width) / clip.sampleRate : (hoverX - overview.x) / overview.width * duration;
-            std::wstring hoverLabel;
-            std::wstring hoverRange;
+            const bool divider_hover = hovering && wave_divider.contains(hover_x, hover_y);
+            const bool tab_hover = hovering && (melody_tabs[0].contains(hover_x, hover_y) || melody_tabs[1].contains(hover_x, hover_y));
+            const bool main_hover = hovering && content.contains(hover_x, hover_y) && !divider_hover && !tab_hover;
+            const bool overview_hover = hovering && overview.contains(hover_x, hover_y);
+            const double hover_time = main_hover ? timeline.frame((hover_x - content.x) / content.width) / clip.sample_rate : (hover_x - overview.x) / overview.width * duration;
+            std::wstring hover_label;
+            std::wstring hover_range;
             std::wstring context;
 
             draw.text(clip.path.stem().wstring(), 19, 32, 24, foreground, width - 300);
-            draw.text(timeLabel(seconds, true), 23, width - 210, 22, foreground, 118);
-            draw.text(L"/ " + timeLabel(duration, false), 12, width - 80, 34, muted, 55);
+            draw.text(time_label(seconds, true), 23, width - 210, 22, foreground, 118);
+            draw.text(L"/ " + time_label(duration, false), 12, width - 80, 34, muted, 55);
             draw.text(L"BARS", 11, 32, content.y + 3, muted, 64);
             for (std::size_t lane = 0; lane < lanes.size(); ++lane) draw.text(std::array{L"FORM", L"KEY", L"CHORDS"}[lane], 11, 32, lanes[lane].y + lanes[lane].height / 2 - 8, muted, 64);
-            draw.rect({content.x, content.y + 30, content.width, hairline}, ruleColor);
+            draw.rect({content.x, content.y + 30, content.width, hairline}, rule_color);
             for (std::uint32_t channel = 0; channel < clip.channels; ++channel) {
                 const float center = waveform.y + waveform.height / clip.channels * (channel + .5f);
                 draw.text(clip.channels == 1 ? L"M" : channel == 0 ? L"L" : L"R", 11, 51, center - 8, muted, 16);
-                draw.rect({waveform.x, center, waveform.width, hairline}, eighthGrid);
+                draw.rect({waveform.x, center, waveform.width, hairline}, eighth_grid);
             }
             draw.text(L"OVERVIEW", 11, 32, overview.y + 16, muted, 80);
-            if (dividerHover || drag == Drag::height) draw.rect({waveDivider.x, waveDivider.y + waveDivider.height / 2, waveDivider.width, hairline}, muted);
+            if (divider_hover || drag == Drag::height) draw.rect({wave_divider.x, wave_divider.y + wave_divider.height / 2, wave_divider.width, hairline}, muted);
             for (int track = 0; track < 2; ++track) {
-                const auto& tab = melodyTabs[track];
-                const bool active = track == melodyTrack;
-                const bool hovered = hovering && tab.contains(hoverX, hoverY);
+                const auto& tab = melody_tabs[track];
+                const bool active = track == melody_track;
+                const bool hovered = hovering && tab.contains(hover_x, hover_y);
                 draw.text(track == 0 ? L"VOCAL" : L"INST", 11, tab.x + 12, tab.y + 2, analysis && (active || hovered) ? foreground : muted, tab.width - 12);
                 if (analysis && active) draw.rect({tab.x + 1, tab.y + 9, 4, 4}, accent, 2);
             }
-            const double labelTime = mainHover && melody.contains(hoverX, hoverY) ? hoverTime : seconds;
-            const MelodyPassage* labelPassage = nullptr;
-            double labelDistance = std::numeric_limits<double>::infinity();
-            for (const auto& passage : melodyPassages) {
-                if (passage.end <= viewStart || passage.start >= viewEnd || passage.low[melodyTrack] > passage.high[melodyTrack]) continue;
-                const double distance = std::max({passage.start - labelTime, labelTime - passage.end, 0.});
-                if (distance <= labelDistance) {
-                    labelPassage = &passage;
-                    labelDistance = distance;
+            const double label_time = main_hover && melody.contains(hover_x, hover_y) ? hover_time : seconds;
+            const MelodyPassage* label_passage = nullptr;
+            double label_distance = std::numeric_limits<double>::infinity();
+            for (const auto& passage : melody_passages) {
+                if (passage.end <= view_start || passage.start >= view_end || passage.low[melody_track] > passage.high[melody_track]) continue;
+                const double distance = std::max({passage.start - label_time, label_time - passage.end, 0.});
+                if (distance <= label_distance) {
+                    label_passage = &passage;
+                    label_distance = distance;
                 }
-                const float x = melody.x + static_cast<float>(timeline.fraction(std::max(passage.start, viewStart) * clip.sampleRate) * melody.width);
-                const float right = melody.x + static_cast<float>(timeline.fraction(std::min(passage.end, viewEnd) * clip.sampleRate) * melody.width);
-                const float step = melody.height / (passage.high[melodyTrack] - passage.low[melodyTrack] + 1);
-                // Fractional limits retain edge chromatic notes without adding another scale degree.
-                for (int row = static_cast<int>(std::ceil(passage.low[melodyTrack])); row <= static_cast<int>(std::floor(passage.high[melodyTrack])); ++row) {
-                    const float y = melody.y + (passage.high[melodyTrack] - row) * step;
+                const float x = melody.x + static_cast<float>(timeline.fraction(std::max(passage.start, view_start) * clip.sample_rate) * melody.width);
+                const float right = melody.x + static_cast<float>(timeline.fraction(std::min(passage.end, view_end) * clip.sample_rate) * melody.width);
+                const float step = melody.height / (passage.high[melody_track] - passage.low[melody_track] + 1);
+                for (int row = static_cast<int>(std::ceil(passage.low[melody_track])); row <= static_cast<int>(std::floor(passage.high[melody_track])); ++row) {
+                    const float y = melody.y + (passage.high[melody_track] - row) * step;
                     const bool tonic = row % 7 == 0;
                     if (tonic) draw.rect({x, y, right - x, step}, {5 / 255.f, 8 / 255.f, 10 / 255.f, 1});
-                    draw.rect({x, y + step - hairline, right - x, hairline}, tonic ? ruleColor : eighthGrid);
+                    draw.rect({x, y + step - hairline, right - x, hairline}, tonic ? rule_color : eighth_grid);
                 }
             }
-            if (labelPassage) {
-                const auto passageIndex = static_cast<std::size_t>(labelPassage - melodyPassages.data());
-                const float step = melody.height / (labelPassage->high[melodyTrack] - labelPassage->low[melodyTrack] + 1);
-                for (int row = static_cast<int>(std::ceil(labelPassage->low[melodyTrack] * 2)); row <= static_cast<int>(std::floor(labelPassage->high[melodyTrack] * 2)); ++row) {
-                    const bool inScale = row % 2 == 0;
-                    if (!inScale && (step < 22 || std::ranges::none_of(melodyNotes, [&](const auto& note) { return note.passage == passageIndex && analysis->notes[note.source].track == melodyTrack && note.row == row * .5f; }))) continue;
-                    const float center = melody.y + (labelPassage->high[melodyTrack] - row * .5f + .5f) * step;
-                    const float textSize = inScale ? std::clamp(std::round(step * .36f), 9.f, 14.f) : 8.f;
-                    const bool sounding = std::ranges::any_of(melodyNotes, [&](const auto& note) { return note.passage == passageIndex && analysis->notes[note.source].track == melodyTrack && note.row == row * .5f && seconds >= note.start && seconds < note.end; });
-                    draw.text(labelPassage->labels[(row % 14 + 14) % 14], textSize, 24, center - textSize * 2 / 3, sounding ? accent : row % 14 == 0 ? foreground : muted, melody.x - 36, false, true);
+            if (label_passage) {
+                const auto passage_index = static_cast<std::size_t>(label_passage - melody_passages.data());
+                const float step = melody.height / (label_passage->high[melody_track] - label_passage->low[melody_track] + 1);
+                for (int row = static_cast<int>(std::ceil(label_passage->low[melody_track] * 2)); row <= static_cast<int>(std::floor(label_passage->high[melody_track] * 2)); ++row) {
+                    const bool in_scale = row % 2 == 0;
+                    if (!in_scale && (step < 22 || std::ranges::none_of(melody_notes, [&](const auto& note) { return note.passage == passage_index && analysis->notes[note.source].track == melody_track && note.row == row * .5f; }))) continue;
+                    const float center = melody.y + (label_passage->high[melody_track] - row * .5f + .5f) * step;
+                    const float text_size = in_scale ? std::clamp(std::round(step * .36f), 9.f, 14.f) : 8.f;
+                    const bool sounding = std::ranges::any_of(melody_notes, [&](const auto& note) { return note.passage == passage_index && analysis->notes[note.source].track == melody_track && note.row == row * .5f && seconds >= note.start && seconds < note.end; });
+                    draw.text(label_passage->labels[(row % 14 + 14) % 14], text_size, 24, center - text_size * 2 / 3, sounding ? accent : row % 14 == 0 ? foreground : muted, melody.x - 36, false, true);
                 }
             }
 
@@ -339,166 +335,166 @@ namespace editor {
                 const auto stride = std::max(1, static_cast<int>(std::ceil(28 / (spacing * 4))));
                 for (const auto& beat : analysis->beats) {
                     if (beat.position == 1) ++bar;
-                    if (beat.time < viewStart || beat.time > viewEnd) continue;
+                    if (beat.time < view_start || beat.time > view_end) continue;
                     if (beat.position != 1 && spacing < 14) continue;
                     if (beat.position == 1 && (bar - 1) % stride) continue;
-                    const float x = static_cast<float>(std::round((content.x + timeline.fraction(beat.time * clip.sampleRate) * content.width) * draw.scale) / draw.scale);
+                    const float x = static_cast<float>(std::round((content.x + timeline.fraction(beat.time * clip.sample_rate) * content.width) * draw.scale) / draw.scale);
                     if (beat.position == 1) {
-                        const float textWidth = std::min(40.f, content.x + content.width - x - 4);
-                        if (textWidth > 0) draw.text(std::to_wstring(bar), 10, x + 4, content.y + 2, muted, textWidth, false, true);
+                        const float text_width = std::min(40.f, content.x + content.width - x - 4);
+                        if (text_width > 0) draw.text(std::to_wstring(bar), 10, x + 4, content.y + 2, muted, text_width, false, true);
                     }
-                    draw.rect({x, content.y + (beat.position == 1 ? 24 : 25), hairline, beat.position == 1 ? 6.f : 5.f}, beat.position == 1 ? muted : ruleColor);
-                    draw.rect({x, waveform.y, hairline, waveform.height}, beat.position == 1 ? barGrid : beatGrid);
-                    draw.rect({x, melody.y, hairline, melody.height}, beat.position == 1 ? barGrid : beatGrid);
+                    draw.rect({x, content.y + (beat.position == 1 ? 24 : 25), hairline, beat.position == 1 ? 6.f : 5.f}, beat.position == 1 ? muted : rule_color);
+                    draw.rect({x, waveform.y, hairline, waveform.height}, beat.position == 1 ? bar_grid : beat_grid);
+                    draw.rect({x, melody.y, hairline, melody.height}, beat.position == 1 ? bar_grid : beat_grid);
                 }
                 for (const auto& [beat, next] : analysis->beats | std::views::adjacent<2>) {
-                    if (next.time <= viewStart || beat.time >= viewEnd) continue;
+                    if (next.time <= view_start || beat.time >= view_end) continue;
                     const double sixteenth = (next.time - beat.time) * beat.denominator / 16;
                     for (int division = 1; division * beat.denominator < 16; ++division) {
                         const bool quarter = division % 4 == 0;
                         const bool eighth = division % 2 == 0;
                         if (sixteenth * pixels < (quarter ? 3.5 : eighth ? 4. : 6.)) continue;
                         const double time = beat.time + sixteenth * division;
-                        if (time < viewStart || time >= viewEnd) continue;
-                        const float x = static_cast<float>(std::round((melody.x + timeline.fraction(time * clip.sampleRate) * melody.width) * draw.scale) / draw.scale);
-                        const auto color = quarter ? beatGrid : eighth ? eighthGrid : sixteenthGrid;
+                        if (time < view_start || time >= view_end) continue;
+                        const float x = static_cast<float>(std::round((melody.x + timeline.fraction(time * clip.sample_rate) * melody.width) * draw.scale) / draw.scale);
+                        const auto color = quarter ? beat_grid : eighth ? eighth_grid : sixteenth_grid;
                         draw.rect({x, melody.y, hairline, melody.height}, color);
                     }
                 }
                 const std::array tracks{&analysis->sections, &analysis->keys, &analysis->chords};
                 for (std::size_t lane = 0; lane < tracks.size(); ++lane) {
                     const auto& intervals = *tracks[lane];
-                    const auto count = lane == 2 ? chordSegments.size() : intervals.size();
+                    const auto count = lane == 2 ? chord_segments.size() : intervals.size();
                     for (std::size_t i = 0; i < count; ++i) {
-                        const double start = lane == 2 ? chordSegments[i].start : intervals[i].start;
-                        double end = lane == 2 ? chordSegments[i].end : intervals[i].end;
-                        const auto label = lane == 2 ? chordSegments[i].name : intervalLabel(intervals[i].label, lane);
-                        const std::wstring_view numeral = lane == 2 ? std::wstring_view(chordSegments[i].numeral) : std::wstring_view{};
-                        const auto fullLabel = numeral.empty() ? label : std::format(L"{} · {}", label, numeral);
+                        const double start = lane == 2 ? chord_segments[i].start : intervals[i].start;
+                        double end = lane == 2 ? chord_segments[i].end : intervals[i].end;
+                        const auto label = lane == 2 ? chord_segments[i].name : interval_label(intervals[i].label, lane);
+                        const std::wstring_view numeral = lane == 2 ? std::wstring_view(chord_segments[i].numeral) : std::wstring_view{};
+                        const auto full_label = numeral.empty() ? label : std::format(L"{} · {}", label, numeral);
                         if (lane == 0) {
                             while (i + 1 < intervals.size() && intervals[i + 1].label == intervals[i].label && std::abs(intervals[i + 1].start - end) < .001) end = intervals[++i].end;
                         }
-                        const bool active = seconds >= start && (seconds < end || (currentFrame == clip.frames && end >= duration - .001));
+                        const bool active = seconds >= start && (seconds < end || (current_frame == clip.frames && end >= duration - .001));
                         if (active) {
                             if (!context.empty()) context += L"   ·   ";
-                            context += fullLabel;
+                            context += full_label;
                         }
-                        const bool hovered = mainHover && lanes[lane].contains(hoverX, hoverY) && hoverTime >= start && hoverTime < end;
+                        const bool hovered = main_hover && lanes[lane].contains(hover_x, hover_y) && hover_time >= start && hover_time < end;
                         if (hovered) {
-                            hoverLabel = fullLabel;
-                            hoverRange = timeLabel(start, true) + L" — " + timeLabel(end, true);
+                            hover_label = full_label;
+                            hover_range = time_label(start, true) + L" — " + time_label(end, true);
                         }
-                        if (end <= viewStart || start >= viewEnd) continue;
-                        const float x = content.x + static_cast<float>(timeline.fraction(std::max(start, viewStart) * clip.sampleRate) * content.width);
-                        const float right = content.x + static_cast<float>(timeline.fraction(std::min(end, viewEnd) * clip.sampleRate) * content.width);
-                        const float segmentWidth = std::max(0.f, right - x - 2);
-                        draw.rect({x, lanes[lane].y, segmentWidth, lanes[lane].height}, hovered ? hoverSurface : active ? activeSurface : surfaceColor);
-                        if (active) draw.rect({x, lanes[lane].y + lanes[lane].height - hairline, segmentWidth, hairline}, accent);
+                        if (end <= view_start || start >= view_end) continue;
+                        const float x = content.x + static_cast<float>(timeline.fraction(std::max(start, view_start) * clip.sample_rate) * content.width);
+                        const float right = content.x + static_cast<float>(timeline.fraction(std::min(end, view_end) * clip.sample_rate) * content.width);
+                        const float segment_width = std::max(0.f, right - x - 2);
+                        draw.rect({x, lanes[lane].y, segment_width, lanes[lane].height}, hovered ? hover_surface : active ? active_surface : surface_color);
+                        if (active) draw.rect({x, lanes[lane].y + lanes[lane].height - hairline, segment_width, hairline}, accent);
                         const float padding = lane == 2 ? 6.f : 12.f;
-                        if (segmentWidth > padding * 2) {
-                            const float textWidth = segmentWidth - padding * 2;
-                            draw.text(label, lane == 2 ? 14.f : 12.f, x + padding, lanes[lane].y + (numeral.empty() ? (lanes[lane].height - 18) / 2 : 2), foreground, textWidth, false, true);
-                            if (!numeral.empty()) draw.text(numeral, 11, x + padding, lanes[lane].y + 23, active ? accent : muted, textWidth, false, true);
+                        if (segment_width > padding * 2) {
+                            const float text_width = segment_width - padding * 2;
+                            draw.text(label, lane == 2 ? 14.f : 12.f, x + padding, lanes[lane].y + (numeral.empty() ? (lanes[lane].height - 18) / 2 : 2), foreground, text_width, false, true);
+                            if (!numeral.empty()) draw.text(numeral, 11, x + padding, lanes[lane].y + 23, active ? accent : muted, text_width, false, true);
                         }
                     }
                 }
-                const MelodyNote* hoveredNote = nullptr;
-                Rect hoveredRect;
-                float hoverDistance = std::numeric_limits<float>::infinity();
-                for (const auto& segment : melodyNotes) {
-                    if (segment.end <= viewStart || segment.start >= viewEnd) continue;
+                const MelodyNote* hovered_note = nullptr;
+                Rect hovered_rect;
+                float hover_distance = std::numeric_limits<float>::infinity();
+                for (const auto& segment : melody_notes) {
+                    if (segment.end <= view_start || segment.start >= view_end) continue;
                     const auto& note = analysis->notes[segment.source];
-                    if (note.track != melodyTrack) continue;
+                    if (note.track != melody_track) continue;
                     const auto& area = melody;
-                    const auto& passage = melodyPassages[segment.passage];
+                    const auto& passage = melody_passages[segment.passage];
                     const float step = area.height / (passage.high[note.track] - passage.low[note.track] + 1);
-                    const float x = area.x + static_cast<float>(timeline.fraction(std::max(segment.start, viewStart) * clip.sampleRate) * area.width);
-                    const float right = area.x + static_cast<float>(timeline.fraction(std::min(segment.end, viewEnd) * clip.sampleRate) * area.width);
+                    const float x = area.x + static_cast<float>(timeline.fraction(std::max(segment.start, view_start) * clip.sample_rate) * area.width);
+                    const float right = area.x + static_cast<float>(timeline.fraction(std::min(segment.end, view_end) * clip.sample_rate) * area.width);
                     const float center = area.y + (passage.high[note.track] - segment.row + .5f) * step;
                     const bool sounding = seconds >= segment.start && seconds < segment.end;
-                    const auto color = sounding ? accent : noteColor;
+                    const auto color = sounding ? accent : note_color;
                     const float gap = segment.end == note.end ? std::min(hairline, (right - x) * .15f) : 0;
-                    const float noteWidth = std::min(area.x + area.width - x, std::max(hairline, right - x - gap));
-                    const float noteHeight = segment.inScale ? step * .92f : hairline;
-                    const Rect rect{x, center - noteHeight / 2, noteWidth, noteHeight};
-                    draw.rect(rect, color, segment.inScale ? std::min({1.5f, noteHeight / 2, noteWidth / 2}) : 0);
-                    const float dx = std::max({x - hoverX, hoverX - right, 0.f});
-                    const float dy = std::abs(hoverY - center);
+                    const float note_width = std::min(area.x + area.width - x, std::max(hairline, right - x - gap));
+                    const float note_height = segment.in_scale ? step * .92f : hairline;
+                    const Rect rect{x, center - note_height / 2, note_width, note_height};
+                    draw.rect(rect, color, segment.in_scale ? std::min({1.5f, note_height / 2, note_width / 2}) : 0);
+                    const float dx = std::max({x - hover_x, hover_x - right, 0.f});
+                    const float dy = std::abs(hover_y - center);
                     const float distance = dx * dx + dy * dy;
-                    if (mainHover && area.contains(hoverX, hoverY) && dx <= 3 && dy <= std::max(3.f, noteHeight / 2) && distance < hoverDistance) {
-                        hoveredNote = &segment;
-                        hoveredRect = rect;
-                        hoverDistance = distance;
+                    if (main_hover && area.contains(hover_x, hover_y) && dx <= 3 && dy <= std::max(3.f, note_height / 2) && distance < hover_distance) {
+                        hovered_note = &segment;
+                        hovered_rect = rect;
+                        hover_distance = distance;
                     }
                 }
-                if (hoveredNote) {
-                    const auto& note = analysis->notes[hoveredNote->source];
-                    draw.rect(hoveredRect, accent, hoveredNote->inScale ? std::min({1.5f, hoveredRect.height / 2, hoveredRect.width / 2}) : 0);
-                    hoverLabel = std::format(L"{}   ·   {}   ·   {}", hoveredNote->label, hoveredNote->name, note.track == 0 ? L"Vocal" : L"Instrumental");
-                    hoverRange = std::format(L"{} — {}   ·   {:.3f} s", timeLabel(note.start, true), timeLabel(note.end, true), note.end - note.start);
+                if (hovered_note) {
+                    const auto& note = analysis->notes[hovered_note->source];
+                    draw.rect(hovered_rect, accent, hovered_note->in_scale ? std::min({1.5f, hovered_rect.height / 2, hovered_rect.width / 2}) : 0);
+                    hover_label = std::format(L"{}   ·   {}   ·   {}", hovered_note->label, hovered_note->name, note.track == 0 ? L"Vocal" : L"Instrumental");
+                    hover_range = std::format(L"{} — {}   ·   {:.3f} s", time_label(note.start, true), time_label(note.end, true), note.end - note.start);
                 }
                 const auto beat = std::ranges::upper_bound(analysis->beats, seconds, {}, &musicia::Beat::time);
                 const auto& meter = beat == analysis->beats.begin() ? analysis->beats.front() : *std::prev(beat);
                 draw.text(std::format(L"{:.1f} BPM   ·   {} / {}", analysis->bpm, meter.numerator, meter.denominator), 10, 32, 53, muted, width - 64);
                 draw.text(context, 10, content.x, height - 30, muted, content.width - 130);
-            } else if (!analysisError.empty()) draw.text(analysisError, 10, 32, 53, {.94f, .65f, .58f, 1}, width - 64);
+            } else if (!analysis_error.empty()) draw.text(analysis_error, 10, 32, 53, {.94f, .65f, .58f, 1}, width - 64);
             else {
                 const auto stage = progress.stage.load();
                 const auto status = stage == musicia::AnalysisStage::loading ? L"Loading model..." : std::format(L"Analyzing {} / {}", progress.window.load(), progress.windows.load());
                 draw.text(status, 10, 32, 53, muted, width - 64);
             }
 
-            draw.text(timeLabel(viewStart, false) + L" — " + timeLabel(viewEnd, false), 10, width - 146, height - 30, muted, 114);
-            const float viewLeft = overview.x + static_cast<float>(timeline.first / clip.frames * overview.width);
-            const float viewRight = overview.x + static_cast<float>((timeline.first + timeline.count) / clip.frames * overview.width);
-            draw.rect({viewLeft, overview.y, viewRight - viewLeft, overview.height}, activeSurface);
-            draw.waveLayer = static_cast<std::uint32_t>(draw.vertices.size());
-            draw.waveRect = waveform;
-            draw.overviewRect = overview;
-            draw.waveFirst = timeline.first;
-            draw.waveCount = timeline.count;
-            draw.wavePosition = currentFrame;
+            draw.text(time_label(view_start, false) + L" — " + time_label(view_end, false), 10, width - 146, height - 30, muted, 114);
+            const float view_left = overview.x + static_cast<float>(timeline.first / clip.frames * overview.width);
+            const float view_right = overview.x + static_cast<float>((timeline.first + timeline.count) / clip.frames * overview.width);
+            draw.rect({view_left, overview.y, view_right - view_left, overview.height}, active_surface);
+            draw.wave_layer = static_cast<std::uint32_t>(draw.vertices.size());
+            draw.wave_rect = waveform;
+            draw.overview_rect = overview;
+            draw.wave_first = timeline.first;
+            draw.wave_count = timeline.count;
+            draw.wave_position = current_frame;
 
-            draw.rect({overview.x, overview.y, viewLeft - overview.x, overview.height}, {background.r, background.g, background.b, .35f});
-            draw.rect({viewRight, overview.y, overview.x + overview.width - viewRight, overview.height}, {background.r, background.g, background.b, .35f});
-            draw.rect({viewLeft, overview.y, viewRight - viewLeft, hairline}, accent);
-            draw.rect({viewLeft, overview.y + overview.height - hairline, viewRight - viewLeft, hairline}, accent);
-            draw.rect({viewLeft, overview.y, hairline, overview.height}, accent);
-            draw.rect({viewRight - hairline, overview.y, hairline, overview.height}, accent);
-            if (overviewHover || drag == Drag::overview || drag == Drag::view || drag == Drag::left || drag == Drag::right) {
-                draw.rect({viewLeft - 1, overview.y + 17, 2, 14}, accent, 1);
-                draw.rect({viewRight - 1, overview.y + 17, 2, 14}, accent, 1);
+            draw.rect({overview.x, overview.y, view_left - overview.x, overview.height}, {background.r, background.g, background.b, .35f});
+            draw.rect({view_right, overview.y, overview.x + overview.width - view_right, overview.height}, {background.r, background.g, background.b, .35f});
+            draw.rect({view_left, overview.y, view_right - view_left, hairline}, accent);
+            draw.rect({view_left, overview.y + overview.height - hairline, view_right - view_left, hairline}, accent);
+            draw.rect({view_left, overview.y, hairline, overview.height}, accent);
+            draw.rect({view_right - hairline, overview.y, hairline, overview.height}, accent);
+            if (overview_hover || drag == Drag::overview || drag == Drag::view || drag == Drag::left || drag == Drag::right) {
+                draw.rect({view_left - 1, overview.y + 17, 2, 14}, accent, 1);
+                draw.rect({view_right - 1, overview.y + 17, 2, 14}, accent, 1);
             }
             if (analysis) {
                 for (std::size_t key = 1; key < analysis->keys.size(); ++key) {
                     const auto& change = analysis->keys[key];
-                    if (change.label == analysis->keys[key - 1].label || change.start < viewStart || change.start >= viewEnd) continue;
-                    const float x = static_cast<float>(std::round((content.x + timeline.fraction(change.start * clip.sampleRate) * content.width) * draw.scale) / draw.scale);
-                    draw.rect({x, waveform.y, hairline, content.y + content.height - waveform.y}, ruleColor);
+                    if (change.label == analysis->keys[key - 1].label || change.start < view_start || change.start >= view_end) continue;
+                    const float x = static_cast<float>(std::round((content.x + timeline.fraction(change.start * clip.sample_rate) * content.width) * draw.scale) / draw.scale);
+                    draw.rect({x, waveform.y, hairline, content.y + content.height - waveform.y}, rule_color);
                 }
             }
-            if (mainHover && drag == Drag::none) draw.rect({std::round(hoverX * draw.scale) / draw.scale, content.y, hairline, content.height}, {61 / 255.f, 63 / 255.f, 67 / 255.f, 1});
-            if (currentFrame >= timeline.first && currentFrame <= timeline.first + timeline.count) {
-                const float x = static_cast<float>(std::round((content.x + timeline.fraction(currentFrame) * content.width) * draw.scale) / draw.scale);
+            if (main_hover && drag == Drag::none) draw.rect({std::round(hover_x * draw.scale) / draw.scale, content.y, hairline, content.height}, {61 / 255.f, 63 / 255.f, 67 / 255.f, 1});
+            if (current_frame >= timeline.first && current_frame <= timeline.first + timeline.count) {
+                const float x = static_cast<float>(std::round((content.x + timeline.fraction(current_frame) * content.width) * draw.scale) / draw.scale);
                 draw.rect({x, content.y, hairline, content.height}, accent);
                 draw.rect({x - 2, content.y - 3, 4, 4}, accent, 2);
             }
-            const float globalX = overview.x + static_cast<float>(currentFrame / clip.frames * overview.width);
-            draw.rect({globalX, overview.y + 2, hairline, overview.height - 4}, accent);
-            if ((mainHover || overviewHover) && drag == Drag::none) {
-                const float tooltipWidth = hoverLabel.empty() ? 90.f : 320.f;
-                const float tooltipHeight = hoverLabel.empty() ? 29.f : 62.f;
-                const float x = std::clamp(hoverX + 13, content.x, content.x + content.width - tooltipWidth);
-                const float y = mainHover ? (hoverY + 18 + tooltipHeight <= content.y + content.height ? hoverY + 18 : hoverY - tooltipHeight - 12) : overview.y - tooltipHeight - 8;
-                draw.rect({x, y, tooltipWidth, tooltipHeight}, ruleColor, 4);
-                draw.rect({x + hairline, y + hairline, tooltipWidth - 2 * hairline, tooltipHeight - 2 * hairline}, surfaceColor, 3);
-                if (!hoverLabel.empty()) {
-                    draw.text(hoverLabel, 12, x + 10, y + 6, foreground, tooltipWidth - 20);
-                    draw.text(hoverRange, 10, x + 10, y + 25, muted, tooltipWidth - 20);
+            const float global_x = overview.x + static_cast<float>(current_frame / clip.frames * overview.width);
+            draw.rect({global_x, overview.y + 2, hairline, overview.height - 4}, accent);
+            if ((main_hover || overview_hover) && drag == Drag::none) {
+                const float tooltip_width = hover_label.empty() ? 90.f : 320.f;
+                const float tooltip_height = hover_label.empty() ? 29.f : 62.f;
+                const float x = std::clamp(hover_x + 13, content.x, content.x + content.width - tooltip_width);
+                const float y = main_hover ? (hover_y + 18 + tooltip_height <= content.y + content.height ? hover_y + 18 : hover_y - tooltip_height - 12) : overview.y - tooltip_height - 8;
+                draw.rect({x, y, tooltip_width, tooltip_height}, rule_color, 4);
+                draw.rect({x + hairline, y + hairline, tooltip_width - 2 * hairline, tooltip_height - 2 * hairline}, surface_color, 3);
+                if (!hover_label.empty()) {
+                    draw.text(hover_label, 12, x + 10, y + 6, foreground, tooltip_width - 20);
+                    draw.text(hover_range, 10, x + 10, y + 25, muted, tooltip_width - 20);
                 }
-                draw.text(timeLabel(hoverTime, true), 10, x + 10, y + tooltipHeight - 21, accent, tooltipWidth - 20);
+                draw.text(time_label(hover_time, true), 10, x + 10, y + tooltip_height - 21, accent, tooltip_width - 20);
             }
-            if (dropActive) {
+            if (drop_active) {
                 draw.rect(content, {background.r, background.g, background.b, .9f});
                 draw.text(L"Drop to replace audio", 15, content.x, content.y + content.height / 2 - 11, foreground, content.width, true);
             }
@@ -506,38 +502,38 @@ namespace editor {
         draw.draw();
     }
 
-    void Window::moveDrag(float x, float y) {
+    void Window::move_drag(float x, float y) {
         if (drag == Drag::height) {
-            waveHeight = std::clamp(dragHeight + y - dragY, 80.f, std::max(80.f, height - 606));
+            wave_height = std::clamp(drag_height + y - drag_y, 80.f, std::max(80.f, height - 606));
             layout();
         } else if (drag == Drag::seek) {
-            dragFrame = std::clamp(timeline.frame((x - content.x) / content.width), 0., static_cast<double>(audio.clip.frames));
-            audio.seek(static_cast<std::uint64_t>(dragFrame));
+            drag_frame = std::clamp(timeline.frame((x - content.x) / content.width), 0., static_cast<double>(audio.clip.frames));
+            audio.seek(static_cast<std::uint64_t>(drag_frame));
         } else if (drag == Drag::pan) {
-            timeline.first = std::clamp(dragFirst - static_cast<double>(x - dragX) / content.width * dragCount, 0., static_cast<double>(audio.clip.frames) - dragCount);
+            timeline.first = std::clamp(drag_first - static_cast<double>(x - drag_x) / content.width * drag_count, 0., static_cast<double>(audio.clip.frames) - drag_count);
         } else if (drag != Drag::none) {
-            dragMoved = dragMoved || std::abs(x - dragX) >= 3;
-            if (dragMoved) {
+            drag_moved = drag_moved || std::abs(x - drag_x) >= 3;
+            if (drag_moved) {
                 follow = false;
                 const double total = static_cast<double>(audio.clip.frames);
-                const double delta = (x - dragX) / overview.width * total;
+                const double delta = (x - drag_x) / overview.width * total;
                 const double minimum = std::min(32., total);
                 if (drag == Drag::left) {
-                    timeline.first = std::clamp(dragFirst + delta, 0., dragFirst + dragCount - minimum);
-                    timeline.count = dragFirst + dragCount - timeline.first;
-                } else if (drag == Drag::right) timeline.count = std::clamp(dragCount + delta, minimum, total - dragFirst);
-                else if (drag == Drag::view) timeline.first = std::clamp(dragFirst + delta, 0., total - dragCount);
+                    timeline.first = std::clamp(drag_first + delta, 0., drag_first + drag_count - minimum);
+                    timeline.count = drag_first + drag_count - timeline.first;
+                } else if (drag == Drag::right) timeline.count = std::clamp(drag_count + delta, minimum, total - drag_first);
+                else if (drag == Drag::view) timeline.first = std::clamp(drag_first + delta, 0., total - drag_count);
             }
         }
         refresh();
     }
 
-    void Window::finishDrag(bool commit) {
+    void Window::finish_drag(bool commit) {
         if (drag == Drag::seek) {
-            audio.playing = restorePlayback;
+            audio.playing = restore_playback;
             SetEvent(audio.command);
-        } else if ((drag == Drag::overview || drag == Drag::view || drag == Drag::left || drag == Drag::right) && commit && !dragMoved) {
-            const double frame = std::clamp(static_cast<double>(dragX - overview.x) / overview.width * audio.clip.frames, 0., static_cast<double>(audio.clip.frames));
+        } else if ((drag == Drag::overview || drag == Drag::view || drag == Drag::left || drag == Drag::right) && commit && !drag_moved) {
+            const double frame = std::clamp(static_cast<double>(drag_x - overview.x) / overview.width * audio.clip.frames, 0., static_cast<double>(audio.clip.frames));
             audio.seek(static_cast<std::uint64_t>(frame));
             timeline.reveal(frame, audio.clip.frames);
             follow = true;
@@ -586,7 +582,7 @@ namespace editor {
             {
                 if (renderer) {
                     renderer->scale = HIWORD(wparam) / 96.f;
-                    renderer->resetFonts();
+                    renderer->reset_fonts();
                 }
                 const auto& rect = *reinterpret_cast<const RECT*>(lparam);
                 SetWindowPos(handle, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, SWP_NOACTIVATE | SWP_NOZORDER);
@@ -606,33 +602,33 @@ namespace editor {
             if (analyzing.valid() && analyzing.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
                 try {
                     auto completed = analyzing.get();
-                    if (!analysisStop.stop_requested()) {
+                    if (!analysis_stop.stop_requested()) {
                         analysis = std::move(completed);
-                        melodyTrack = std::ranges::any_of(analysis->notes, [](const auto& note) { return note.track == 0; }) ? 0 : 1;
-                        rebuildAnalysisView();
+                        melody_track = std::ranges::any_of(analysis->notes, [](const auto& note) { return note.track == 0; }) ? 0 : 1;
+                        rebuild_analysis_view();
                     }
                 } catch (const std::exception& exception) {
-                    if (!analysisStop.stop_requested()) {
+                    if (!analysis_stop.stop_requested()) {
                         const std::string detail = exception.what();
-                        analysisError.assign(detail.begin(), detail.end());
+                        analysis_error.assign(detail.begin(), detail.end());
                     }
                 }
             }
-            if (loading && loadingClip.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                auto completed = std::move(loadingClip);
+            if (loading && loading_clip.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                auto completed = std::move(loading_clip);
                 loading        = false;
-                if (!pendingPath.empty()) {
-                    load(std::exchange(pendingPath, {}));
+                if (!pending_path.empty()) {
+                    load(std::exchange(pending_path, {}));
                     return 0;
                 }
                 try {
                     auto clip = completed.get();
-                    analysisSamples = std::make_shared<const std::vector<float>>(std::move(clip.analysis));
+                    analysis_samples = std::make_shared<const std::vector<float>>(std::move(clip.analysis));
                     renderer->upload(clip);
                     audio.open(std::move(clip));
                     timeline.fit(audio.clip.frames);
                     loaded = true;
-                    analysisPending = true;
+                    analysis_pending = true;
                 } catch (const std::exception& exception) {
                     audio.close();
                     const std::string detail = exception.what();
@@ -640,11 +636,11 @@ namespace editor {
                     loaded = false;
                 }
             }
-            if (loaded && analysisPending && !analyzing.valid()) {
-                analysisPending = false;
-                analysisStop = std::stop_source{};
+            if (loaded && analysis_pending && !analyzing.valid()) {
+                analysis_pending = false;
+                analysis_stop = std::stop_source{};
                 progress.stage = musicia::AnalysisStage::loading;
-                analyzing = std::async(std::launch::async, [this, samples = analysisSamples, stop = analysisStop.get_token()] {
+                analyzing = std::async(std::launch::async, [this, samples = analysis_samples, stop = analysis_stop.get_token()] {
                     if (!model) model.emplace(std::filesystem::path(MUSICIA_MODEL_DIRECTORY));
                     return model->analyze(*samples, progress, stop);
                 });
@@ -652,14 +648,14 @@ namespace editor {
             refresh();
             return 0;
         case WM_MOUSEMOVE:
-            hoverX = GET_X_LPARAM(lparam) / renderer->scale;
-            hoverY = GET_Y_LPARAM(lparam) / renderer->scale;
+            hover_x = GET_X_LPARAM(lparam) / renderer->scale;
+            hover_y = GET_Y_LPARAM(lparam) / renderer->scale;
             if (!hovering) {
                 TRACKMOUSEEVENT tracking{sizeof(TRACKMOUSEEVENT), TME_LEAVE, handle, 0};
                 TrackMouseEvent(&tracking);
                 hovering = true;
             }
-            if (drag != Drag::none) moveDrag(hoverX, hoverY);
+            if (drag != Drag::none) move_drag(hover_x, hover_y);
             else refresh();
             return 0;
         case WM_MOUSELEAVE:
@@ -673,28 +669,28 @@ namespace editor {
                 const auto y = GET_Y_LPARAM(lparam) / renderer->scale;
                 SetFocus(handle);
                 for (int track = 0; track < 2; ++track) {
-                    if (!melodyTabs[track].contains(x, y)) continue;
+                    if (!melody_tabs[track].contains(x, y)) continue;
                     if (analysis) {
-                        melodyTrack = track;
+                        melody_track = track;
                         refresh();
                     }
                     return 0;
                 }
                 if ((wparam & MK_CONTROL) && analysis) {
-                    const double time = timeline.frame((x - content.x) / content.width) / audio.clip.sampleRate;
+                    const double time = timeline.frame((x - content.x) / content.width) / audio.clip.sample_rate;
                     const std::array tracks{&analysis->sections, &analysis->keys, &analysis->chords};
                     for (std::size_t lane = 0; lane < lanes.size(); ++lane) {
                         if (!lanes[lane].contains(x, y)) continue;
                         const auto& intervals = *tracks[lane];
-                        const auto count = lane == 2 ? chordSegments.size() : intervals.size();
+                        const auto count = lane == 2 ? chord_segments.size() : intervals.size();
                         for (std::size_t i = 0; i < count; ++i) {
-                            const double start = lane == 2 ? chordSegments[i].start : intervals[i].start;
-                            double end = lane == 2 ? chordSegments[i].end : intervals[i].end;
+                            const double start = lane == 2 ? chord_segments[i].start : intervals[i].start;
+                            double end = lane == 2 ? chord_segments[i].end : intervals[i].end;
                             if (lane == 0) {
                                 while (i + 1 < intervals.size() && intervals[i + 1].label == intervals[i].label && std::abs(intervals[i + 1].start - end) < .001) end = intervals[++i].end;
                             }
                             if (time < start || time >= end) continue;
-                            const auto frame = static_cast<std::uint64_t>(start * audio.clip.sampleRate);
+                            const auto frame = static_cast<std::uint64_t>(start * audio.clip.sample_rate);
                             audio.seek(frame);
                             timeline.reveal(static_cast<double>(frame), audio.clip.frames);
                             follow = true;
@@ -705,42 +701,41 @@ namespace editor {
                     }
                 }
                 if ((wparam & MK_SHIFT) && analysis && lanes[1].contains(x, y)) {
-                    const double time = timeline.frame((x - content.x) / content.width) / audio.clip.sampleRate;
+                    const double time = timeline.frame((x - content.x) / content.width) / audio.clip.sample_rate;
                     for (auto& key : analysis->keys) {
                         if (time < key.start || time >= key.end) continue;
                         constexpr std::string_view letters = "CDEFGAB";
                         constexpr std::array natural{0, 2, 4, 5, 7, 9, 11};
-                        const auto rootLetter = letters.find(key.label.front());
-                        int root = natural[rootLetter];
+                        const auto root_letter = letters.find(key.label.front());
+                        int root = natural[root_letter];
                         for (std::size_t i = 1; i < key.label.find(':'); ++i) root += key.label[i] == '#' ? 1 : -1;
                         const bool minor = key.label.ends_with(":minor");
-                        // Relative major/minor preserves the key signature and note pitches.
-                        const auto relativeLetter = (rootLetter + (minor ? 2 : 5)) % 7;
-                        const int alteration = ((root + (minor ? 3 : 9) - natural[relativeLetter]) % 12 + 18) % 12 - 6;
-                        key.label = std::string(1, letters[relativeLetter]) + std::string(std::abs(alteration), alteration < 0 ? 'b' : '#') + (minor ? ":major" : ":minor");
-                        rebuildAnalysisView();
+                        const auto relative_letter = (root_letter + (minor ? 2 : 5)) % 7;
+                        const int alteration = ((root + (minor ? 3 : 9) - natural[relative_letter]) % 12 + 18) % 12 - 6;
+                        key.label = std::string(1, letters[relative_letter]) + std::string(std::abs(alteration), alteration < 0 ? 'b' : '#') + (minor ? ":major" : ":minor");
+                        rebuild_analysis_view();
                         refresh();
                         break;
                     }
                     return 0;
                 }
-                if (waveDivider.contains(x, y)) {
+                if (wave_divider.contains(x, y)) {
                     drag = Drag::height;
-                    dragY = y;
-                    dragHeight = waveform.height;
+                    drag_y = y;
+                    drag_height = waveform.height;
                     SetCapture(handle);
                     refresh();
                 } else if (content.contains(x, y)) {
-                    restorePlayback = audio.playing.exchange(false);
+                    restore_playback = audio.playing.exchange(false);
                     drag            = Drag::seek;
                     follow = true;
                     SetCapture(handle);
-                    moveDrag(x, y);
+                    move_drag(x, y);
                 } else if (overview.contains(x, y)) {
-                    dragX = x;
-                    dragFirst = timeline.first;
-                    dragCount = timeline.count;
-                    dragMoved = false;
+                    drag_x = x;
+                    drag_first = timeline.first;
+                    drag_count = timeline.count;
+                    drag_moved = false;
                     const float left = overview.x + static_cast<float>(timeline.first / audio.clip.frames * overview.width);
                     const float right = overview.x + static_cast<float>((timeline.first + timeline.count) / audio.clip.frames * overview.width);
                     if (std::min(std::abs(x - left), std::abs(x - right)) <= 6) drag = std::abs(x - left) <= std::abs(x - right) ? Drag::left : Drag::right;
@@ -754,13 +749,13 @@ namespace editor {
             if (loaded && drag == Drag::none) {
                 const auto x = GET_X_LPARAM(lparam) / renderer->scale;
                 const auto y = GET_Y_LPARAM(lparam) / renderer->scale;
-                if (melodyTabs[0].contains(x, y) || melodyTabs[1].contains(x, y)) return 0;
+                if (melody_tabs[0].contains(x, y) || melody_tabs[1].contains(x, y)) return 0;
                 if (content.contains(x, y)) {
                     SetFocus(handle);
                     drag = Drag::pan;
-                    dragX = x;
-                    dragFirst = timeline.first;
-                    dragCount = timeline.count;
+                    drag_x = x;
+                    drag_first = timeline.first;
+                    drag_count = timeline.count;
                     follow = false;
                     SetCapture(handle);
                     refresh();
@@ -768,13 +763,13 @@ namespace editor {
             }
             return 0;
         case WM_LBUTTONUP:
-            if (drag != Drag::none && drag != Drag::pan) finishDrag(true);
+            if (drag != Drag::none && drag != Drag::pan) finish_drag(true);
             return 0;
         case WM_MBUTTONUP:
-            if (drag == Drag::pan) finishDrag();
+            if (drag == Drag::pan) finish_drag();
             return 0;
         case WM_CAPTURECHANGED:
-            if (drag != Drag::none) finishDrag();
+            if (drag != Drag::none) finish_drag();
             return 0;
         case WM_MOUSEWHEEL:
         case WM_MOUSEHWHEEL:
@@ -783,7 +778,7 @@ namespace editor {
                 ScreenToClient(handle, &point);
                 const auto x = point.x / renderer->scale;
                 const auto y = point.y / renderer->scale;
-                if (!content.contains(x, y) || melodyTabs[0].contains(x, y) || melodyTabs[1].contains(x, y)) return 0;
+                if (!content.contains(x, y) || melody_tabs[0].contains(x, y) || melody_tabs[1].contains(x, y)) return 0;
                 const auto delta = GET_WHEEL_DELTA_WPARAM(wparam) / 120.0;
                 if ((GET_KEYSTATE_WPARAM(wparam) & MK_SHIFT) || message == WM_MOUSEHWHEEL) {
                     timeline.pan(timeline.count * delta * (message == WM_MOUSEHWHEEL ? .1 : -.1), audio.clip.frames);
@@ -799,11 +794,11 @@ namespace editor {
                 ScreenToClient(handle, &point);
                 const auto x = point.x / renderer->scale;
                 const auto y = point.y / renderer->scale;
-                if (drag == Drag::height || waveDivider.contains(x, y)) {
+                if (drag == Drag::height || wave_divider.contains(x, y)) {
                     SetCursor(LoadCursorW(nullptr, IDC_SIZENS));
                     return TRUE;
                 }
-                if (drag == Drag::none && (melodyTabs[0].contains(x, y) || melodyTabs[1].contains(x, y))) {
+                if (drag == Drag::none && (melody_tabs[0].contains(x, y) || melody_tabs[1].contains(x, y))) {
                     SetCursor(LoadCursorW(nullptr, analysis ? IDC_HAND : IDC_ARROW));
                     return TRUE;
                 }
@@ -829,7 +824,7 @@ namespace editor {
                     SetEvent(audio.command);
                     refresh();
                 } else if (wparam == VK_TAB && analysis && !(lparam & (1LL << 30))) {
-                    melodyTrack = 1 - melodyTrack;
+                    melody_track = 1 - melody_track;
                     refresh();
                 } else if (wparam == 'F') {
                     timeline.fit(audio.clip.frames);
@@ -841,7 +836,7 @@ namespace editor {
                     follow = true;
                     refresh();
                 } else if (wparam == VK_LEFT || wparam == VK_RIGHT) {
-                    const double frame = std::clamp(static_cast<double>(audio.position()) + (wparam == VK_LEFT ? -1 : 1) * static_cast<double>(audio.clip.sampleRate), 0., static_cast<double>(audio.clip.frames));
+                    const double frame = std::clamp(static_cast<double>(audio.position()) + (wparam == VK_LEFT ? -1 : 1) * static_cast<double>(audio.clip.sample_rate), 0., static_cast<double>(audio.clip.frames));
                     audio.seek(static_cast<std::uint64_t>(frame));
                     timeline.reveal(frame, audio.clip.frames);
                     follow = true;
@@ -881,7 +876,7 @@ namespace editor {
         try {
             return app->message(message, wparam, lparam);
         } catch (const std::exception& exception) {
-            app->fatalError = exception.what();
+            app->fatal_error = exception.what();
             PostQuitMessage(1);
             return 0;
         }
@@ -906,26 +901,26 @@ namespace editor {
 
     HRESULT Window::DragEnter(IDataObject* object, DWORD, POINTL, DWORD* effect) {
         FORMATETC format{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-        acceptsDrop = SUCCEEDED(object->QueryGetData(&format));
-        dropActive  = acceptsDrop;
-        *effect     = acceptsDrop ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        accepts_drop = SUCCEEDED(object->QueryGetData(&format));
+        drop_active  = accepts_drop;
+        *effect     = accepts_drop ? DROPEFFECT_COPY : DROPEFFECT_NONE;
         refresh();
         return S_OK;
     }
 
     HRESULT Window::DragOver(DWORD, POINTL, DWORD* effect) {
-        *effect = acceptsDrop ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        *effect = accepts_drop ? DROPEFFECT_COPY : DROPEFFECT_NONE;
         return S_OK;
     }
 
     HRESULT Window::DragLeave() {
-        dropActive = false;
+        drop_active = false;
         refresh();
         return S_OK;
     }
 
     HRESULT Window::Drop(IDataObject* object, DWORD, POINTL, DWORD* effect) {
-        dropActive = false;
+        drop_active = false;
         FORMATETC format{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
         STGMEDIUM medium{};
         const auto result = object->GetData(&format, &medium);
@@ -938,7 +933,7 @@ namespace editor {
         try {
             load(std::filesystem::path(path));
         } catch (const std::exception& exception) {
-            fatalError = exception.what();
+            fatal_error = exception.what();
             PostQuitMessage(1);
             return E_FAIL;
         }

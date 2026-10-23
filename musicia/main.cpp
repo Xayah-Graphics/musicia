@@ -10,7 +10,7 @@ int main(int argc, char** argv) {
 #endif
     try {
         const auto clip = musicia::AudioClip::read(std::filesystem::path(argv[1]));
-        std::println("Audio: {} Hz, {} channels, {:.3f} seconds", clip.sampleRate, clip.channels, static_cast<double>(clip.frames) / clip.sampleRate);
+        std::println("Audio: {} Hz, {} channels, {:.3f} seconds", clip.sample_rate, clip.channels, static_cast<double>(clip.frames) / clip.sample_rate);
         const auto directory = argc > 3 ? std::filesystem::path(argv[3]) : std::filesystem::path(MUSICIA_MODEL_DIRECTORY);
         musicia::SheetSage2 model(directory);
         musicia::AnalysisProgress progress;

@@ -6,12 +6,12 @@ namespace musicia::sheetsage2 {
         return __bfloat162float(__float2bfloat16_rn(value));
     }
 
-    __global__ void toBfloat(const float* input, __nv_bfloat16* output, int count) {
+    __global__ void to_bfloat(const float* input, __nv_bfloat16* output, int count) {
         const int i = blockIdx.x * blockDim.x + threadIdx.x;
         if (i < count) output[i] = __float2bfloat16_rn(input[i]);
     }
 
-    __global__ void mergeAdapter(float* weight, __nv_bfloat16* reduced, const float* update, int count) {
+    __global__ void merge_adapter(float* weight, __nv_bfloat16* reduced, const float* update, int count) {
         const int i = blockIdx.x * blockDim.x + threadIdx.x;
         if (i < count) {
             weight[i] += update[i] * 2.f;
@@ -19,12 +19,12 @@ namespace musicia::sheetsage2 {
         }
     }
 
-    __global__ void fromBfloat(const __nv_bfloat16* input, float* output, int count) {
+    __global__ void from_bfloat(const __nv_bfloat16* input, float* output, int count) {
         const int i = blockIdx.x * blockDim.x + threadIdx.x;
         if (i < count) output[i] = __bfloat162float(input[i]);
     }
 
-    __global__ void biasRound(float* output, const float* bias, int width, int count) {
+    __global__ void bias_round(float* output, const float* bias, int width, int count) {
         const int i = blockIdx.x * blockDim.x + threadIdx.x;
         if (i < count) output[i] = rounded(output[i] + (bias ? rounded(bias[i % width]) : 0.f));
     }
@@ -76,7 +76,7 @@ namespace musicia::sheetsage2 {
         }
     }
 
-    __global__ void mixLayers(float* output, const float* input, int count, float weight, bool reduced, bool first) {
+    __global__ void mix_layers(float* output, const float* input, int count, float weight, bool reduced, bool first) {
         const int i = blockIdx.x * blockDim.x + threadIdx.x;
         if (i < count) {
             float y = input[i] * weight;
@@ -97,7 +97,7 @@ namespace musicia::sheetsage2 {
         output[i] = rounded(sum + (bias ? rounded(bias[channel]) : 0.f));
     }
 
-    __global__ void packStride(const float* input, float* output, int length, int channels) {
+    __global__ void pack_stride(const float* input, float* output, int length, int channels) {
         const int i = blockIdx.x * blockDim.x + threadIdx.x;
         if (i < length * channels * 2) {
             const int row = i / (channels * 2), column = i % (channels * 2);
@@ -105,7 +105,7 @@ namespace musicia::sheetsage2 {
         }
     }
 
-    __global__ void globalMagnitude(const float* input, float* magnitude, int length, int channels) {
+    __global__ void global_magnitude(const float* input, float* magnitude, int length, int channels) {
         __shared__ float sums[256];
         const int c = blockIdx.x;
         float sum = 0;
@@ -122,7 +122,7 @@ namespace musicia::sheetsage2 {
         if (!threadIdx.x) magnitude[c] = sqrtf(sums[0]);
     }
 
-    __global__ void globalResponse(float* input, const float* magnitude, const float* weight, const float* bias, int length, int channels) {
+    __global__ void global_response(float* input, const float* magnitude, const float* weight, const float* bias, int length, int channels) {
         __shared__ float denominator;
         __shared__ float sums[256];
         float sum = 0;
@@ -165,7 +165,7 @@ namespace musicia::sheetsage2 {
         }
     }
 
-    __global__ void decodeAttentionPartials(const float* query, const __nv_bfloat16* key, const __nv_bfloat16* value, float* partials, int heads, int length, int segments) {
+    __global__ void decode_attention_partials(const float* query, const __nv_bfloat16* key, const __nv_bfloat16* value, float* partials, int heads, int length, int segments) {
         __shared__ float maxima[4], sums[4], values[4][64];
         const int head = blockIdx.x / segments, segment = blockIdx.x % segments;
         const int warp = threadIdx.x / 32, lane = threadIdx.x % 32;
@@ -209,7 +209,7 @@ namespace musicia::sheetsage2 {
         }
     }
 
-    __global__ void decodeAttentionReduce(const float* partials, float* output, int segments) {
+    __global__ void decode_attention_reduce(const float* partials, float* output, int segments) {
         __shared__ float scales[128], sums[128], maximum, denominator;
         const int thread = threadIdx.x, head = blockIdx.x;
         const int offset = (head * segments + thread) * 66;
@@ -247,12 +247,12 @@ namespace musicia::sheetsage2 {
         }
     }
 
-    __global__ void magnitudeSquared(const cufftComplex* input, float* output, int count) {
+    __global__ void magnitude_squared(const cufftComplex* input, float* output, int count) {
         const int i = blockIdx.x * blockDim.x + threadIdx.x;
         if (i < count) output[i] = input[i].x * input[i].x + input[i].y * input[i].y;
     }
 
-    __global__ void logMel(float* data, const float* mean, const float* standard) {
+    __global__ void log_mel(float* data, const float* mean, const float* standard) {
         const int i = blockIdx.x * blockDim.x + threadIdx.x;
         if (i < 30000 * 128) data[i] = (10.f * log10f(fmaxf(data[i], 1e-10f)) - mean[i % 128]) / fmaxf(standard[i % 128], 1e-5f);
     }

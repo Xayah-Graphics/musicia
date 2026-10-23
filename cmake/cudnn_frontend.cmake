@@ -13,8 +13,6 @@ FetchContent_Declare(cudnn_frontend
     SOURCE_SUBDIR unused
 )
 FetchContent_MakeAvailable(cudnn_frontend)
-# These header-defined functions are reachable from Graph in a C++ module.
-# External inline linkage keeps their lambda types reachable across module imports.
 set(CUDNN_HEURISTICS_HEADER "${cudnn_frontend_SOURCE_DIR}/include/cudnn_frontend_Heuristics.h")
 file(READ "${CUDNN_HEURISTICS_HEADER}" CUDNN_HEURISTICS_SOURCE)
 string(REPLACE "static inline" "inline" CUDNN_HEURISTICS_MODULE_SOURCE "${CUDNN_HEURISTICS_SOURCE}")
