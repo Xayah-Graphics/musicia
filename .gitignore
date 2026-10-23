@@ -1,5 +1,6 @@
 .idea
 .venv
+/assets/
 cmake-build-*
 build*
 AGENTS.md

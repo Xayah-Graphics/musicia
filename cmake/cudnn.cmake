@@ -6,8 +6,16 @@ else()
     set(CUDNN_ARCHIVE cudnn/linux-x86_64/cudnn-linux-x86_64-9.27.0.42_cuda13-archive.tar.xz)
     set(CUDNN_HASH dd3245ba3aca8593934fc946d08649ad3a5ee8500e8da3870bc23bf7ddccd7f9)
 endif()
+cmake_path(GET CUDNN_ARCHIVE FILENAME CUDNN_FILENAME)
+set(CUDNN_DOWNLOAD "${PROJECT_SOURCE_DIR}/assets/downloads/${CUDNN_FILENAME}")
+file(MAKE_DIRECTORY "${PROJECT_SOURCE_DIR}/assets/downloads")
+file(DOWNLOAD
+    "https://developer.download.nvidia.com/compute/cudnn/redist/${CUDNN_ARCHIVE}"
+    "${CUDNN_DOWNLOAD}"
+    EXPECTED_HASH "SHA256=${CUDNN_HASH}"
+    TLS_VERIFY ON SHOW_PROGRESS)
 FetchContent_Declare(cudnn
-    URL "https://developer.download.nvidia.com/compute/cudnn/redist/${CUDNN_ARCHIVE}"
+    URL "${CUDNN_DOWNLOAD}"
     URL_HASH "SHA256=${CUDNN_HASH}"
     SOURCE_SUBDIR unused
 )

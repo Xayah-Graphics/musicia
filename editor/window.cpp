@@ -156,6 +156,95 @@ namespace editor {
         overview = {content.x, height - 96, content.width, 48};
     }
 
+    void Window::rebuildAnalysisView() {
+        chordSegments.clear();
+        chordSegments.reserve(analysis->chords.size());
+        melodyPassages.clear();
+        melodyPassages.reserve(analysis->keys.size());
+        melodyNotes.clear();
+        melodyNotes.reserve(analysis->notes.size());
+        constexpr std::wstring_view letters = L"CDEFGAB";
+        constexpr std::array natural{0, 2, 4, 5, 7, 9, 11};
+        constexpr std::array solfege{L"Do", L"Re", L"Mi", L"Fa", L"Sol", L"La", L"Si"};
+        constexpr std::array upperNumerals{L"I", L"II", L"III", L"IV", L"V", L"VI", L"VII"};
+        constexpr std::array lowerNumerals{L"i", L"ii", L"iii", L"iv", L"v", L"vi", L"vii"};
+        for (std::size_t key = 0; key < analysis->keys.size(); ++key) {
+            auto interval = analysis->keys[key];
+            while (key + 1 < analysis->keys.size() && analysis->keys[key + 1].label == interval.label && std::abs(analysis->keys[key + 1].start - interval.end) < .001) interval.end = analysis->keys[++key].end;
+            const auto passageIndex = melodyPassages.size();
+            auto& passage = melodyPassages.emplace_back(MelodyPassage{.start = interval.start, .end = interval.end});
+            const auto rootLetter = letters.find(static_cast<wchar_t>(interval.label.front()));
+            int root = natural[rootLetter];
+            for (std::size_t i = 1; i < interval.label.find(':'); ++i) root += interval.label[i] == '#' ? 1 : -1;
+            const bool minorKey = interval.label.ends_with(":minor");
+            const auto scale = minorKey ? std::array{0, 2, 3, 5, 7, 8, 10, 12} : std::array{0, 2, 4, 5, 7, 9, 11, 12};
+            int signature = 0;
+            for (std::size_t degree = 0; degree < 7; ++degree) signature += ((root + scale[degree] - natural[(rootLetter + degree) % 7]) % 12 + 18) % 12 - 6;
+            // Even rows are scale tones; odd rows hold chromatic tones between them.
+            for (int semitone = 0; semitone < 12; ++semitone) {
+                const auto degree = static_cast<int>(std::ranges::upper_bound(scale, semitone) - scale.begin()) - 1;
+                const bool inScale = semitone == scale[degree];
+                const int namedDegree = degree + (!inScale && signature < 0 ? 1 : 0);
+                // Major starts on Do, minor on La; Roman degrees remain relative to the tonic.
+                const int solfegeDegree = (namedDegree + (minorKey ? 5 : 0)) % 7;
+                const int alteration = semitone - scale[namedDegree];
+                const std::wstring accidental(std::abs(alteration), alteration < 0 ? L'♭' : L'♯');
+                passage.labels[degree * 2 + (inScale ? 0 : 1)] = std::format(L"{}{} ({}{})", accidental, solfege[solfegeDegree], accidental, upperNumerals[namedDegree % 7]);
+            }
+            for (const auto& chord : analysis->chords) {
+                if (chord.start >= interval.end) break;
+                if (chord.end <= interval.start) continue;
+                std::wstring numeral;
+                if (chord.label != "N") {
+                    const std::string_view label = chord.label;
+                    const auto colon = label.find(':');
+                    const auto slash = label.find('/');
+                    const auto quality = label.substr(colon + 1, (slash == label.npos ? label.size() : slash) - colon - 1);
+                    const auto letter = letters.find(static_cast<wchar_t>(label.front()));
+                    int pitch = natural[letter];
+                    for (std::size_t i = 1; i < colon; ++i) pitch += label[i] == '#' ? 1 : -1;
+                    const int chromatic = ((pitch - root) % 12 + 12) % 12;
+                    const auto step = std::ranges::find(scale, chromatic);
+                    const auto degree = step != scale.end() ? static_cast<std::size_t>(step - scale.begin()) : (letter + 7 - rootLetter) % 7;
+                    // Alterations are relative to the current major or natural-minor scale.
+                    const int alteration = ((pitch - root - scale[degree]) % 12 + 18) % 12 - 6;
+                    const bool minor = quality.starts_with("min") || quality == "dim" || quality == "dim7" || quality == "hdim7";
+                    numeral.assign(std::abs(alteration), alteration < 0 ? L'♭' : L'♯');
+                    numeral += (minor ? lowerNumerals : upperNumerals)[degree];
+                    if (quality == "dim" || quality == "dim7") numeral += L"°";
+                    else if (quality == "hdim7") numeral += L"ø";
+                    else if (quality == "aug") numeral += L"+";
+                    if (quality == "maj7" || quality == "minmaj7") numeral += L"maj7";
+                    else if (quality.ends_with("7")) numeral += L"7";
+                    else if (quality == "sus2") numeral += L"sus2";
+                    else if (quality == "sus4") numeral += L"sus4";
+                    else if (quality == "sus4(b7)") numeral += L"7sus4";
+                    else if (quality == "maj6" || quality == "min6") numeral += L"(add6)";
+                }
+                chordSegments.push_back({std::max(chord.start, interval.start), std::min(chord.end, interval.end), intervalLabel(chord.label, 2), std::move(numeral)});
+            }
+            for (std::size_t source = 0; source < analysis->notes.size(); ++source) {
+                const auto& note = analysis->notes[source];
+                if (note.start >= interval.end) break;
+                if (note.end <= interval.start) continue;
+                const int octave = static_cast<int>(std::floor((note.pitch - root) / 12.));
+                const int semitone = note.pitch - root - octave * 12;
+                const auto degree = static_cast<int>(std::ranges::upper_bound(scale, semitone) - scale.begin()) - 1;
+                const bool inScale = semitone == scale[degree];
+                const int namedDegree = degree + (!inScale && signature < 0 ? 1 : 0);
+                const auto letter = (rootLetter + namedDegree) % 7;
+                const int accidental = (note.pitch - natural[letter] + 18) % 12 - 6;
+                std::wstring name(1, letters[letter]);
+                name += std::wstring(std::abs(accidental), accidental < 0 ? L'♭' : L'♯');
+                name += std::to_wstring((note.pitch - accidental) / 12 - 1);
+                const float row = octave * 7 + degree + (inScale ? 0.f : .5f);
+                melodyNotes.push_back({source, passageIndex, std::max(note.start, interval.start), std::min(note.end, interval.end), row, inScale, std::move(name), passage.labels[degree * 2 + (inScale ? 0 : 1)]});
+                passage.low[note.track] = std::min(passage.low[note.track], row);
+                passage.high[note.track] = std::max(passage.high[note.track], row);
+            }
+        }
+    }
+
     void Window::refresh() {
         if (loading || audio.playing.load() || analyzing.valid() || analysisPending) SetTimer(handle, 1, 16, nullptr);
         else KillTimer(handle, 1);
@@ -520,92 +609,7 @@ namespace editor {
                     if (!analysisStop.stop_requested()) {
                         analysis = std::move(completed);
                         melodyTrack = std::ranges::any_of(analysis->notes, [](const auto& note) { return note.track == 0; }) ? 0 : 1;
-                        chordSegments.clear();
-                        chordSegments.reserve(analysis->chords.size());
-                        melodyPassages.clear();
-                        melodyPassages.reserve(analysis->keys.size());
-                        melodyNotes.clear();
-                        melodyNotes.reserve(analysis->notes.size());
-                        constexpr std::wstring_view letters = L"CDEFGAB";
-                        constexpr std::array natural{0, 2, 4, 5, 7, 9, 11};
-                        constexpr std::array solfege{L"Do", L"Re", L"Mi", L"Fa", L"Sol", L"La", L"Si"};
-                        constexpr std::array upperNumerals{L"I", L"II", L"III", L"IV", L"V", L"VI", L"VII"};
-                        constexpr std::array lowerNumerals{L"i", L"ii", L"iii", L"iv", L"v", L"vi", L"vii"};
-                        for (std::size_t key = 0; key < analysis->keys.size(); ++key) {
-                            auto interval = analysis->keys[key];
-                            while (key + 1 < analysis->keys.size() && analysis->keys[key + 1].label == interval.label && std::abs(analysis->keys[key + 1].start - interval.end) < .001) interval.end = analysis->keys[++key].end;
-                            const auto passageIndex = melodyPassages.size();
-                            auto& passage = melodyPassages.emplace_back(MelodyPassage{.start = interval.start, .end = interval.end});
-                            const auto rootLetter = letters.find(static_cast<wchar_t>(interval.label.front()));
-                            int root = natural[rootLetter];
-                            for (std::size_t i = 1; i < interval.label.find(':'); ++i) root += interval.label[i] == '#' ? 1 : -1;
-                            const bool minorKey = interval.label.ends_with(":minor");
-                            const auto scale = minorKey ? std::array{0, 2, 3, 5, 7, 8, 10, 12} : std::array{0, 2, 4, 5, 7, 9, 11, 12};
-                            int signature = 0;
-                            for (std::size_t degree = 0; degree < 7; ++degree) signature += ((root + scale[degree] - natural[(rootLetter + degree) % 7]) % 12 + 18) % 12 - 6;
-                            // Even rows are scale tones; odd rows hold chromatic tones between them.
-                            for (int semitone = 0; semitone < 12; ++semitone) {
-                                const auto degree = static_cast<int>(std::ranges::upper_bound(scale, semitone) - scale.begin()) - 1;
-                                const bool inScale = semitone == scale[degree];
-                                const int namedDegree = degree + (!inScale && signature < 0 ? 1 : 0);
-                                // Major starts on Do, minor on La; Roman degrees remain relative to the tonic.
-                                const int solfegeDegree = (namedDegree + (minorKey ? 5 : 0)) % 7;
-                                const int alteration = semitone - scale[namedDegree];
-                                const std::wstring accidental(std::abs(alteration), alteration < 0 ? L'♭' : L'♯');
-                                passage.labels[degree * 2 + (inScale ? 0 : 1)] = std::format(L"{}{} ({}{})", accidental, solfege[solfegeDegree], accidental, upperNumerals[namedDegree % 7]);
-                            }
-                            for (const auto& chord : analysis->chords) {
-                                if (chord.start >= interval.end) break;
-                                if (chord.end <= interval.start) continue;
-                                std::wstring numeral;
-                                if (chord.label != "N") {
-                                    const std::string_view label = chord.label;
-                                    const auto colon = label.find(':');
-                                    const auto slash = label.find('/');
-                                    const auto quality = label.substr(colon + 1, (slash == label.npos ? label.size() : slash) - colon - 1);
-                                    const auto letter = letters.find(static_cast<wchar_t>(label.front()));
-                                    int pitch = natural[letter];
-                                    for (std::size_t i = 1; i < colon; ++i) pitch += label[i] == '#' ? 1 : -1;
-                                    const int chromatic = ((pitch - root) % 12 + 12) % 12;
-                                    const auto step = std::ranges::find(scale, chromatic);
-                                    const auto degree = step != scale.end() ? static_cast<std::size_t>(step - scale.begin()) : (letter + 7 - rootLetter) % 7;
-                                    // Alterations are relative to the current major or natural-minor scale.
-                                    const int alteration = ((pitch - root - scale[degree]) % 12 + 18) % 12 - 6;
-                                    const bool minor = quality.starts_with("min") || quality == "dim" || quality == "dim7" || quality == "hdim7";
-                                    numeral.assign(std::abs(alteration), alteration < 0 ? L'♭' : L'♯');
-                                    numeral += (minor ? lowerNumerals : upperNumerals)[degree];
-                                    if (quality == "dim" || quality == "dim7") numeral += L"°";
-                                    else if (quality == "hdim7") numeral += L"ø";
-                                    else if (quality == "aug") numeral += L"+";
-                                    if (quality == "maj7" || quality == "minmaj7") numeral += L"maj7";
-                                    else if (quality.ends_with("7")) numeral += L"7";
-                                    else if (quality == "sus2") numeral += L"sus2";
-                                    else if (quality == "sus4") numeral += L"sus4";
-                                    else if (quality == "sus4(b7)") numeral += L"7sus4";
-                                    else if (quality == "maj6" || quality == "min6") numeral += L"(add6)";
-                                }
-                                chordSegments.push_back({std::max(chord.start, interval.start), std::min(chord.end, interval.end), intervalLabel(chord.label, 2), std::move(numeral)});
-                            }
-                            for (std::size_t source = 0; source < analysis->notes.size(); ++source) {
-                                const auto& note = analysis->notes[source];
-                                if (note.start >= interval.end) break;
-                                if (note.end <= interval.start) continue;
-                                const int octave = static_cast<int>(std::floor((note.pitch - root) / 12.));
-                                const int semitone = note.pitch - root - octave * 12;
-                                const auto degree = static_cast<int>(std::ranges::upper_bound(scale, semitone) - scale.begin()) - 1;
-                                const bool inScale = semitone == scale[degree];
-                                const int namedDegree = degree + (!inScale && signature < 0 ? 1 : 0);
-                                const auto letter = (rootLetter + namedDegree) % 7;
-                                const int accidental = (note.pitch - natural[letter] + 18) % 12 - 6;
-                                std::wstring name(1, letters[letter]);
-                                name += std::wstring(std::abs(accidental), accidental < 0 ? L'♭' : L'♯');
-                                name += std::to_wstring((note.pitch - accidental) / 12 - 1);
-                                const float row = octave * 7 + degree + (inScale ? 0.f : .5f);
-                                melodyNotes.push_back({source, passageIndex, std::max(note.start, interval.start), std::min(note.end, interval.end), row, inScale, std::move(name), passage.labels[degree * 2 + (inScale ? 0 : 1)]});
-                                passage.low[note.track] = std::min(passage.low[note.track], row);
-                                passage.high[note.track] = std::max(passage.high[note.track], row);
-                            }
-                        }
+                        rebuildAnalysisView();
                     }
                 } catch (const std::exception& exception) {
                     if (!analysisStop.stop_requested()) {
@@ -699,6 +703,26 @@ namespace editor {
                         }
                         return 0;
                     }
+                }
+                if ((wparam & MK_SHIFT) && analysis && lanes[1].contains(x, y)) {
+                    const double time = timeline.frame((x - content.x) / content.width) / audio.clip.sampleRate;
+                    for (auto& key : analysis->keys) {
+                        if (time < key.start || time >= key.end) continue;
+                        constexpr std::string_view letters = "CDEFGAB";
+                        constexpr std::array natural{0, 2, 4, 5, 7, 9, 11};
+                        const auto rootLetter = letters.find(key.label.front());
+                        int root = natural[rootLetter];
+                        for (std::size_t i = 1; i < key.label.find(':'); ++i) root += key.label[i] == '#' ? 1 : -1;
+                        const bool minor = key.label.ends_with(":minor");
+                        // Relative major/minor preserves the key signature and note pitches.
+                        const auto relativeLetter = (rootLetter + (minor ? 2 : 5)) % 7;
+                        const int alteration = ((root + (minor ? 3 : 9) - natural[relativeLetter]) % 12 + 18) % 12 - 6;
+                        key.label = std::string(1, letters[relativeLetter]) + std::string(std::abs(alteration), alteration < 0 ? 'b' : '#') + (minor ? ":major" : ":minor");
+                        rebuildAnalysisView();
+                        refresh();
+                        break;
+                    }
+                    return 0;
                 }
                 if (waveDivider.contains(x, y)) {
                     drag = Drag::height;

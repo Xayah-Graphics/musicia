@@ -11,7 +11,7 @@ if(CMAKE_SCRIPT_MODE_FILE)
         EXPECTED_HASH SHA256=e6dd2ab187d6dd62b6521cd7d8f932e237acf0c5757745a7232082e28391350d
         TLS_VERIFY ON SHOW_PROGRESS)
 else()
-    set(MUSIC_MODEL_DIRECTORY "${CMAKE_BINARY_DIR}/models/sheetsage2" CACHE PATH "Directory containing the official model weights")
+    set(MUSIC_MODEL_DIRECTORY "${PROJECT_SOURCE_DIR}/assets" CACHE PATH "Directory containing the official model weights")
     add_custom_command(
         OUTPUT "${MUSIC_MODEL_DIRECTORY}/sheetsage2.safetensors" "${MUSIC_MODEL_DIRECTORY}/mert.safetensors"
         COMMAND ${CMAKE_COMMAND} "-DOUTPUT_DIRECTORY=${MUSIC_MODEL_DIRECTORY}" -P "${CMAKE_CURRENT_LIST_FILE}"

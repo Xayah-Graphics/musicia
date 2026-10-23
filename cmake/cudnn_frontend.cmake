@@ -1,7 +1,15 @@
 include(FetchContent)
+set(CUDNN_FRONTEND_DOWNLOAD "${PROJECT_SOURCE_DIR}/assets/downloads/cudnn-frontend-v1.31.0.tar.gz")
+set(CUDNN_FRONTEND_HASH 130f3e98e3f07defd60bf39b250ae7d96c61ca99443782ce77fd470964fbd899)
+file(MAKE_DIRECTORY "${PROJECT_SOURCE_DIR}/assets/downloads")
+file(DOWNLOAD
+    https://github.com/NVIDIA/cudnn-frontend/archive/refs/tags/v1.31.0.tar.gz
+    "${CUDNN_FRONTEND_DOWNLOAD}"
+    EXPECTED_HASH "SHA256=${CUDNN_FRONTEND_HASH}"
+    TLS_VERIFY ON SHOW_PROGRESS)
 FetchContent_Declare(cudnn_frontend
-    URL https://github.com/NVIDIA/cudnn-frontend/archive/refs/tags/v1.31.0.tar.gz
-    URL_HASH SHA256=130f3e98e3f07defd60bf39b250ae7d96c61ca99443782ce77fd470964fbd899
+    URL "${CUDNN_FRONTEND_DOWNLOAD}"
+    URL_HASH "SHA256=${CUDNN_FRONTEND_HASH}"
     SOURCE_SUBDIR unused
 )
 FetchContent_MakeAvailable(cudnn_frontend)

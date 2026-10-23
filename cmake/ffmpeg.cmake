@@ -6,8 +6,15 @@ else()
     set(FFMPEG_ARCHIVE ffmpeg-n9.0.2-33-g4cf298e66a-linux64-lgpl-shared-9.0.tar.xz)
     set(FFMPEG_HASH e61b204fd8fff979f5091a5c89213de9afbc7c8ee5f6832667793f176adde112)
 endif()
+set(FFMPEG_DOWNLOAD "${PROJECT_SOURCE_DIR}/assets/downloads/${FFMPEG_ARCHIVE}")
+file(MAKE_DIRECTORY "${PROJECT_SOURCE_DIR}/assets/downloads")
+file(DOWNLOAD
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-22-13-06/${FFMPEG_ARCHIVE}"
+    "${FFMPEG_DOWNLOAD}"
+    EXPECTED_HASH "SHA256=${FFMPEG_HASH}"
+    TLS_VERIFY ON SHOW_PROGRESS)
 FetchContent_Declare(ffmpeg
-    URL "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-22-13-06/${FFMPEG_ARCHIVE}"
+    URL "${FFMPEG_DOWNLOAD}"
     URL_HASH "SHA256=${FFMPEG_HASH}"
     SOURCE_SUBDIR unused
 )

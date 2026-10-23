@@ -73,6 +73,7 @@ export namespace editor {
         std::vector<MelodyNote> melodyNotes;
 
         void layout();
+        void rebuildAnalysisView();
         void refresh();
         void render();
         void moveDrag(float x, float y);
