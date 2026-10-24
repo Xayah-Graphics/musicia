@@ -34,7 +34,7 @@ export namespace minidaw {
         static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM w_param, LPARAM l_param);
 
     private:
-        enum struct Gesture { none, marquee, move, copy, resize_end, create, pan, seek, audition, velocity, gain };
+        enum struct Gesture { none, marquee, move, copy, resize_end, create, pan, audition, velocity, gain };
         enum struct Popup { none, key, meter, snap };
         enum Action { copy_notes = 1, cut_notes, paste_notes, duplicate_notes, delete_notes };
         static constexpr float resize_edge_width{24}, resize_edge_fraction{.4f};
@@ -61,7 +61,7 @@ export namespace minidaw {
         std::vector<Note> clipboard;
         std::vector<int> clipboard_degrees;
         std::unordered_set<std::uint64_t> selection, before_selection;
-        bool help{}, moved{}, additive{}, pan_vertical{}, follow{true}, play_from_locator{true};
+        bool help{}, moved{}, additive{}, pan_vertical{}, play_from_locator{true};
         HWND input{};
         WNDPROC input_procedure{};
         HFONT input_font{};
@@ -71,5 +71,10 @@ export namespace minidaw {
         std::chrono::steady_clock::time_point toast_until{};
         std::optional<std::chrono::steady_clock::time_point> follow_resume_at;
         double follow_from{};
+        std::map<std::int64_t, float> bar_focus, focus_from;
+        std::optional<std::int64_t> focus_target;
+        float focus_strength{}, focus_strength_from{}, focus_strength_target{};
+        bool focus_animating{};
+        std::chrono::steady_clock::time_point focus_started{}, focus_fade_started{};
     };
 }

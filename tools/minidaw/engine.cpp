@@ -19,6 +19,11 @@ import std;
 import minidaw.document;
 
 namespace minidaw {
+    struct PlaybackSpan {
+        std::int64_t first{}, last{};
+        double beat{}, step{};
+    };
+
     Engine::Engine(HWND owner, std::filesystem::path directory)
         : owner(owner),
           directory(std::move(directory)) {}
@@ -103,6 +108,9 @@ namespace minidaw {
         client->SetEventHandle(audio_event);
         result = client->GetService(IID_PPV_ARGS(&render));
         if (FAILED(result)) throw std::runtime_error("Cannot acquire WASAPI render buffers.");
+        result = client->GetService(IID_PPV_ARGS(&device_clock));
+        if (SUCCEEDED(result)) result = device_clock->GetFrequency(&clock_frequency);
+        if (FAILED(result)) throw std::runtime_error("Cannot acquire the WASAPI playback clock.");
         const int outputs = component->getBusCount(Steinberg::Vst::kAudio, Steinberg::Vst::kOutput);
         std::vector<Steinberg::Vst::SpeakerArrangement> arrangement(outputs);
         for (int i = 0; i < outputs; ++i) processor->getBusArrangement(Steinberg::Vst::kOutput, i, arrangement[i]);
@@ -130,6 +138,12 @@ namespace minidaw {
         pending = sequence;
         dirty   = true;
     }
+    double Engine::position() const {
+        const double current_position = clock.position(true);
+        const double target = locating.load();
+        const double requested = seek.load();
+        return requested >= 0 ? requested : target >= 0 ? target : current_position;
+    }
     void Engine::start() {
         ResetEvent(stop_event);
         worker = std::jthread([this] {
@@ -137,7 +151,9 @@ namespace minidaw {
             DWORD index{};
             const HANDLE priority = AvSetMmThreadCharacteristicsW(L"Pro Audio", &index);
             std::array<bool, 128> active{};
-            double beat = position;
+            double beat = position();
+            std::deque<PlaybackSpan> spans;
+            std::int64_t locating_frame{};
             int last_preview{-1}, audition_frames{};
             bool pedal{}, release_pedal{true}, was_running{};
             std::int64_t total_frames{};
@@ -157,10 +173,10 @@ namespace minidaw {
                 active[pitch] = on;
             };
             processor->setProcessing(true);
-            client->Start();
+            bool device_started{};
             try {
                 const std::array handles{stop_event, audio_event};
-                while (WaitForMultipleObjects(2, handles.data(), FALSE, INFINITE) == WAIT_OBJECT_0 + 1) {
+                while (!device_started || WaitForMultipleObjects(2, handles.data(), FALSE, INFINITE) == WAIT_OBJECT_0 + 1) {
                     UINT32 padding{};
                     auto result = client->GetCurrentPadding(&padding);
                     if (FAILED(result)) throw std::runtime_error("The audio device stopped responding.");
@@ -183,10 +199,13 @@ namespace minidaw {
                         exchange.unlock();
                     }
                     const bool running = playing;
-                    const double requested = seek.exchange(-1);
+                    double requested = seek.load();
                     bool reset{};
                     if (requested >= 0) {
-                        beat  = requested;
+                        locating = requested;
+                        locating_frame = total_frames;
+                        beat = requested;
+                        seek.compare_exchange_strong(requested, -1);
                         reset = true;
                         release_pedal = true;
                     }
@@ -202,6 +221,7 @@ namespace minidaw {
                         audition_frames = sample_rate / 3;
                     }
                     const double step = current.bpm / (60.0 * sample_rate);
+                    const PlaybackSpan span{total_frames, total_frames + count, beat, running ? step : 0.};
                     const double bar_length = current.beats * 4.0 / current.beat_unit;
                     Steinberg::Vst::ProcessContext context{};
                     context.state = Steinberg::Vst::ProcessContext::kTempoValid | Steinberg::Vst::ProcessContext::kTimeSigValid;
@@ -286,20 +306,39 @@ namespace minidaw {
                             if (channel < 2) block_peaks[channel] = std::max(block_peaks[channel], std::abs(sample));
                         }
                     }
-                    render->ReleaseBuffer(count, 0);
+                    result = render->ReleaseBuffer(count, 0);
+                    if (FAILED(result)) throw std::runtime_error("Cannot submit the audio output buffer.");
+                    if (!device_started) {
+                        result = client->Start();
+                        if (FAILED(result)) throw std::runtime_error("Cannot start the audio output stream.");
+                        device_started = true;
+                    }
                     for (std::size_t channel = 0; channel < block_peaks.size(); ++channel) {
                         auto previous = output_peaks[channel].load(std::memory_order_relaxed);
                         while (previous < block_peaks[channel] && !output_peaks[channel].compare_exchange_weak(previous, block_peaks[channel], std::memory_order_relaxed)) {}
                     }
                     if (std::ranges::max(block_peaks) > 1.f) overloaded.store(true, std::memory_order_relaxed);
-                    position = beat;
+                    if (!spans.empty() && spans.back().step == span.step && requested < 0) spans.back().last = span.last;
+                    else spans.push_back(span);
                     total_frames += count;
+                    UINT64 device_position{}, timestamp{};
+                    result = device_clock->GetPosition(&device_position, &timestamp);
+                    if (FAILED(result)) throw std::runtime_error("Cannot read the WASAPI playback clock.");
+                    const double audible_frame = static_cast<double>(device_position) * sample_rate / clock_frequency;
+                    while (spans.size() > 1 && audible_frame >= spans[1].first) spans.pop_front();
+                    const auto& audible = spans.front();
+                    const double elapsed_frames = std::clamp(audible_frame - audible.first, 0., static_cast<double>(audible.last - audible.first));
+                    const double audible_beat = audible.beat + elapsed_frames * audible.step;
+                    const double end_beat = audible.beat + (audible.last - audible.first) * audible.step;
+                    clock.update(audible_beat, timestamp, device_position ? audible.step * sample_rate : 0., end_beat);
+                    if (audible_frame >= locating_frame) locating = -1;
                 }
             } catch (const std::exception& exception) {
                 error  = exception.what();
                 failed = true;
                 PostMessageW(owner, WM_APP + 2, 0, 0);
             }
+            clock.update(position(), 0, 0);
             events.clear();
             for (int pitch = 0; pitch < 128; ++pitch)
                 if (active[pitch]) emit(pitch, false, 0, 0);

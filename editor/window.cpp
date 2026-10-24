@@ -112,6 +112,14 @@ namespace editor {
         analysis.reset();
         bar_focus.clear();
         focus_from.clear();
+        bar_tints.clear();
+        bar_tint_from = {};
+        chord_tint = {};
+        chord_tint_from = {};
+        chord_tint_to = {};
+        chord_color_target.reset();
+        chord_color_started = {};
+        chord_color_span = ui::chord_color_duration;
         focus_target.reset();
         focus_strength = 0;
         focus_strength_from = 0;
@@ -196,6 +204,7 @@ namespace editor {
                 if (chord.start >= interval.end) break;
                 if (chord.end <= interval.start) continue;
                 std::wstring numeral;
+                int color_index = -1;
                 if (chord.label != "N") {
                     const std::string_view label = chord.label;
                     const auto colon = label.find(':');
@@ -206,6 +215,7 @@ namespace editor {
                     for (std::size_t i = 1; i < colon; ++i) pitch += label[i] == '#' ? 1 : -1;
                     const int chromatic = ((pitch - root) % 12 + 12) % 12;
                     const auto step = std::ranges::find(scale, chromatic);
+                    color_index = step == scale.end() ? 7 : static_cast<int>(step - scale.begin());
                     const auto degree = step != scale.end() ? static_cast<std::size_t>(step - scale.begin()) : (letter + 7 - root_letter) % 7;
                     const int alteration = ((pitch - root - scale[degree]) % 12 + 18) % 12 - 6;
                     const bool minor = quality.starts_with("min") || quality == "dim" || quality == "dim7" || quality == "hdim7";
@@ -221,7 +231,7 @@ namespace editor {
                     else if (quality == "sus4(b7)") numeral += L"7sus4";
                     else if (quality == "maj6" || quality == "min6") numeral += L"(add6)";
                 }
-                chord_segments.push_back({std::max(chord.start, interval.start), std::min(chord.end, interval.end), interval_label(chord.label, 2), std::move(numeral)});
+                chord_segments.push_back({std::max(chord.start, interval.start), std::min(chord.end, interval.end), interval_label(chord.label, 2), std::move(numeral), color_index});
             }
             for (std::size_t source = 0; source < analysis->notes.size(); ++source) {
                 const auto& note = analysis->notes[source];
@@ -301,8 +311,9 @@ namespace editor {
         draw.vertices.clear();
         draw.show_wave = loaded;
         draw.wave_layer = 0;
-        draw.focus_columns.assign(static_cast<std::size_t>(std::lround(width * draw.scale)), std::array{0.f, 0.f});
+        draw.focus_columns.assign(static_cast<std::size_t>(std::lround(width * draw.scale)), FocusColumn{});
         draw.focus_levels = {1, 1};
+        draw.focus_tint = 0;
         draw.focus_strength = 0;
         focus_animating = false;
         if (!loaded) {
@@ -331,12 +342,13 @@ namespace editor {
             if (analysis) {
                 const auto now = std::chrono::steady_clock::now();
                 double transition_phase = 1;
+                float transition_blend = 1;
                 if (focus_target) {
-                    transition_phase = std::clamp(std::chrono::duration<double>(now - focus_started).count() / .36, 0., 1.);
-                    const float blend = static_cast<float>(transition_phase * transition_phase * transition_phase * (10 + transition_phase * (6 * transition_phase - 15)));
-                    for (std::size_t index = 0; index < bar_focus.size(); ++index) bar_focus[index] = std::lerp(focus_from[index], index == *focus_target ? 1.f : 0.f, blend);
+                    transition_phase = std::clamp(std::chrono::duration<double>(now - focus_started).count() / std::chrono::duration<double>(ui::focus_duration).count(), 0., 1.);
+                    transition_blend = static_cast<float>(transition_phase * transition_phase * transition_phase * (10 + transition_phase * (6 * transition_phase - 15)));
+                    for (std::size_t index = 0; index < bar_focus.size(); ++index) bar_focus[index] = std::lerp(focus_from[index], index == *focus_target ? 1.f : 0.f, transition_blend);
                 }
-                float fade_phase = std::clamp(std::chrono::duration<float>(now - focus_fade_started).count() / .2f, 0.f, 1.f);
+                float fade_phase = std::clamp(std::chrono::duration<float>(now - focus_fade_started).count() / std::chrono::duration<float>(ui::focus_fade_duration).count(), 0.f, 1.f);
                 const float fade_blend = fade_phase * fade_phase * fade_phase * (10 + fade_phase * (6 * fade_phase - 15));
                 focus_strength = std::lerp(focus_strength_from, focus_strength_target, fade_blend);
                 std::size_t focus_index = analysis->beats.size();
@@ -347,13 +359,42 @@ namespace editor {
                     break;
                 }
                 const bool in_bar = focus_index != analysis->beats.size() && seconds < duration;
+                double color_phase = std::clamp(std::chrono::duration<double>(now - chord_color_started).count() / chord_color_span.count(), 0., 1.);
+                const float color_blend = static_cast<float>(color_phase * color_phase * color_phase * (10 + color_phase * (6 * color_phase - 15)));
+                for (std::size_t channel = 0; channel < chord_tint.size(); ++channel) chord_tint[channel] = std::lerp(chord_tint_from[channel], chord_tint_to[channel], color_blend);
+                const ChordSegment* current_chord = nullptr;
+                const auto next_chord = std::ranges::upper_bound(chord_segments, seconds, {}, &ChordSegment::start);
+                if (next_chord != chord_segments.begin() && (seconds < std::prev(next_chord)->end || (current_frame == clip.frames && std::prev(next_chord)->end >= duration - .001))) current_chord = &*std::prev(next_chord);
+                const int next_color = current_chord ? current_chord->color_index : -1;
+                if (next_color != chord_color_target) {
+                    chord_tint_from = chord_tint;
+                    chord_tint_to = {};
+                    if (next_color >= 0) {
+                        const auto color = ui::chord_colors[next_color];
+                        const std::array channels{color.r, color.g, color.b};
+                        for (std::size_t channel = 0; channel < channels.size(); ++channel) chord_tint_to[channel] = channels[channel] <= .04045f ? channels[channel] / 12.92f : std::pow((channels[channel] + .055f) / 1.055f, 2.4f);
+                        chord_tint_to[3] = 1;
+                    }
+                    if (!chord_color_target) chord_tint = chord_tint_from = chord_tint_to;
+                    chord_color_target = next_color;
+                    chord_color_span = ui::chord_color_duration;
+                    if (current_chord) chord_color_span = std::min(chord_color_span, std::chrono::duration<double>((current_chord->end - current_chord->start) * ui::chord_color_fraction));
+                    chord_color_started = now;
+                    color_phase = 0;
+                }
+                if (focus_target) {
+                    const float tint_blend = focus_from[*focus_target] > 0 && focus_from[*focus_target] < 1 ? transition_blend : 1.f;
+                    for (std::size_t channel = 0; channel < chord_tint.size(); ++channel) bar_tints[*focus_target][channel] = std::lerp(bar_tint_from[channel], chord_tint[channel], tint_blend);
+                }
                 if (in_bar && focus_target != focus_index) {
                     if (!focus_target || focus_strength == 0) {
                         std::ranges::fill(bar_focus, 0.f);
                         bar_focus[focus_index] = 1;
                     }
+                    bar_tint_from = bar_tints[focus_index];
                     focus_from = bar_focus;
                     focus_target = focus_index;
+                    if (focus_from[focus_index] == 0 || focus_from[focus_index] == 1) bar_tints[focus_index] = chord_tint;
                     focus_started = now;
                     transition_phase = 0;
                 }
@@ -366,6 +407,7 @@ namespace editor {
                 }
                 focus_animating = fade_phase < 1 && focus_strength_from != focus_strength_target;
                 if (focus_target && focus_strength > 0 && transition_phase < 1 && focus_from[*focus_target] != 1) focus_animating = true;
+                if (color_phase < 1 && chord_tint_from != chord_tint_to) focus_animating = true;
                 frames.continuous |= focus_animating;
                 draw.focus_strength = focus_strength;
                 if (focus_strength > 0) {
@@ -385,25 +427,24 @@ namespace editor {
                             const auto after = std::ranges::find(std::next(next), analysis->beats.end(), 1, &musicia::Beat::position);
                             bounds[3] = after == analysis->beats.end() ? duration : after->time;
                         }
-                        std::array<double, 4> edges;
-                        for (std::size_t edge = 0; edge < edges.size(); ++edge) edges[edge] = content.x + (bounds[edge] - view_start) * pixels;
-                        const double feather = std::min(16., (edges[2] - edges[1]) * .5);
-                        const double left = std::max(static_cast<double>(content.x), edges[0] - feather / 2);
-                        const double right = std::min(static_cast<double>(content.x + content.width), edges[3] + feather / 2);
-                        if (right <= left) continue;
-                        const auto first_column = static_cast<std::size_t>(std::lround(left * draw.scale));
-                        const auto last_column = static_cast<std::size_t>(std::lround(right * draw.scale));
+                        std::array<std::size_t, 4> columns;
+                        for (std::size_t edge = 0; edge < columns.size(); ++edge) {
+                            const double x = std::clamp(content.x + (bounds[edge] - view_start) * pixels, static_cast<double>(content.x), static_cast<double>(content.x + content.width));
+                            columns[edge] = static_cast<std::size_t>(std::lround(x * draw.scale));
+                        }
                         const float strength = focus_strength * bar_focus[index];
-                        for (std::size_t column = first_column; column < last_column; ++column) {
-                            const double x = (static_cast<double>(column) + .5) / draw.scale;
-                            const double current = std::min(std::clamp((x - edges[1]) / feather + .5, 0., 1.), std::clamp((edges[2] - x) / feather + .5, 0., 1.));
-                            const double surrounding = std::min(std::clamp((x - edges[0]) / feather + .5, 0., 1.), std::clamp((edges[3] - x) / feather + .5, 0., 1.));
-                            draw.focus_columns[column][0] += strength * static_cast<float>(current);
-                            draw.focus_columns[column][1] += strength * static_cast<float>(surrounding - current);
+                        for (std::size_t band = 0; band < 3; ++band) {
+                            const auto channel = band == 1 ? 0 : 1;
+                            for (std::size_t column = columns[band]; column < columns[band + 1]; ++column) {
+                                auto& focus = draw.focus_columns[column];
+                                focus.emphasis[channel] += strength;
+                                if (band == 1) for (std::size_t component = 0; component < focus.tint.size(); ++component) focus.tint[component] += bar_tints[index][component] * strength;
+                            }
                         }
                     }
                 }
             }
+            const auto context_accent = ui::harmonic_color(ui::accent, chord_tint, 1.f);
             const float hairline = std::round(ui::beat_width * draw.scale) / draw.scale;
             const bool divider_hover = hovering && wave_divider.contains(hover_x, hover_y);
             const bool tab_hover = hovering && (melody_tabs[0].contains(hover_x, hover_y) || melody_tabs[1].contains(hover_x, hover_y));
@@ -420,7 +461,7 @@ namespace editor {
             draw.rect({118, 25, hairline, 12}, ui::rule_color);
             draw.text(clip.path.stem().wstring(), ui::secondary_size, 136, 19, ui::foreground, width - 168);
             draw.rect({ui::outer_margin, ui::header_height, width - 2 * ui::outer_margin, hairline}, ui::rule_color);
-            draw.text(ui::time_label(seconds, true), ui::value_size, width - ui::clock_right, ui::toolbar_y, ui::foreground, 115);
+            draw.text(ui::time_label(seconds, true), ui::value_size, width - ui::clock_right, ui::toolbar_y, context_accent, 115);
             draw.text(L"/ " + ui::time_label(duration, false), ui::label_size, width - 84, ui::toolbar_y + 6, ui::muted, 56);
             draw.text(L"BARS", ui::label_size, 32, content.y + 3, ui::muted, 64);
             for (std::size_t lane = 0; lane < lanes.size(); ++lane) draw.text(std::array{L"FORM", L"KEY", L"CHORDS"}[lane], ui::label_size, 32, lanes[lane].y + lanes[lane].height / 2 - 8, ui::muted, 64);
@@ -428,9 +469,11 @@ namespace editor {
             for (std::uint32_t channel = 0; channel < clip.channels; ++channel) {
                 const float center = waveform.y + waveform.height / clip.channels * (channel + .5f);
                 draw.text(clip.channels == 1 ? L"M" : channel == 0 ? L"L" : L"R", ui::label_size, 51, center - 8, ui::muted, 16);
-                draw.focus_levels = {.10f, .25f};
+                draw.focus_levels = ui::focus_grid_levels;
+                draw.focus_tint = ui::chord_grid_mix;
                 draw.rect({waveform.x, center, waveform.width, hairline}, ui::pitch_grid);
                 draw.focus_levels = {1, 1};
+                draw.focus_tint = 0;
             }
             draw.text(L"OVERVIEW", ui::label_size, 32, overview.y + 13, ui::muted, 80);
             if (divider_hover || drag == Drag::height) draw.rect({wave_divider.x, wave_divider.y + wave_divider.height / 2, wave_divider.width, hairline}, ui::muted);
@@ -445,7 +488,8 @@ namespace editor {
             const double label_time = main_hover ? hover_time : seconds;
             const MelodyPassage* label_passage = nullptr;
             double label_distance = std::numeric_limits<double>::infinity();
-            draw.focus_levels = {.10f, .25f};
+            draw.focus_levels = ui::focus_grid_levels;
+            draw.focus_tint = ui::chord_grid_mix;
             for (const auto& passage : melody_passages) {
                 if (passage.end <= view_start || passage.start >= view_end || passage.low[melody_track] > passage.high[melody_track]) continue;
                 const double distance = std::max({passage.start - label_time, label_time - passage.end, 0.});
@@ -465,6 +509,7 @@ namespace editor {
                 }
             }
             draw.focus_levels = {1, 1};
+            draw.focus_tint = 0;
             if (label_passage) {
                 constexpr std::array names{L"C", L"C#", L"D", L"Eb", L"E", L"F", L"F#", L"G", L"Ab", L"A", L"Bb", L"B"};
                 const auto passage_index = static_cast<std::size_t>(label_passage - melody_passages.data());
@@ -478,12 +523,12 @@ namespace editor {
                     const int pitch = octave * 12 + label_passage->pitch_offsets[degree];
                     const auto label = std::format(L"{}{}  ·  {}", names[pitch % 12], pitch / 12 - 1, label_passage->solfege_labels[degree]);
                     const bool sounding = std::ranges::any_of(melody_notes, [&](const auto& note) { return note.passage == passage_index && analysis->notes[note.source].track == melody_track && note.row == row * .5f && seconds >= note.start && seconds < note.end; });
-                    draw.text(label, ui::label_size, ui::label_x, center - 7.5f, sounding ? ui::note_active_colors[melody_track] : row % 14 == 0 ? ui::foreground : ui::muted, melody.x - 35);
+                    draw.text(label, ui::label_size, ui::label_x, center - 7.5f, sounding ? context_accent : row % 14 == 0 ? ui::foreground : ui::muted, melody.x - 35);
                 }
             }
 
             if (analysis) {
-                draw.focus_levels = {.15f, .30f};
+                draw.focus_levels = ui::focus_annotation_levels;
                 constexpr std::array chord_font_sizes{96.f, 80.f, 64.f, 48.f, 36.f, 28.f, 24.f};
                 const float maximum_chord_size = std::min(96.f, melody.height * .2f);
                 for (std::size_t index = 0; index < chord_segments.size(); ++index) {
@@ -492,15 +537,15 @@ namespace editor {
                     while (index + 1 < chord_segments.size() && chord_segments[index + 1].name == chord.name && chord_segments[index + 1].numeral == chord.numeral && std::abs(chord_segments[index + 1].start - chord_end) < .001) chord_end = chord_segments[++index].end;
                     if (chord.start >= view_end) break;
                     if (chord_end <= view_start || chord.numeral.empty()) continue;
+                    const bool active = seconds >= chord.start && (seconds < chord_end || (current_frame == clip.frames && chord_end >= duration - .001));
+                    draw.focus_tint = active ? ui::chord_annotation_mix : 0;
                     auto next_bar = std::ranges::upper_bound(analysis->beats, chord.start, {}, &musicia::Beat::time);
                     for (double start = chord.start; start < chord_end && start < view_end;) {
                         next_bar = std::ranges::find_if(next_bar, analysis->beats.end(), [](const auto& beat) { return beat.position == 1; });
                         const double end = next_bar == analysis->beats.end() ? chord_end : std::min(chord_end, next_bar->time);
                         if (end > view_start) {
-                            const float left = melody.x + static_cast<float>((std::max(start, view_start) - view_start) * pixels);
-                            const float right = melody.x + static_cast<float>((std::min(end, view_end) - view_start) * pixels);
                             const float center = melody.x + static_cast<float>((std::midpoint(start, end) - view_start) * pixels);
-                            const float text_width = 2 * std::min(center - left, right - center) - 24;
+                            const float text_width = static_cast<float>((end - start) * pixels) - 24;
                             if (text_width >= chord_font_sizes.back()) {
                                 float emphasis = 0;
                                 for (auto beat = next_bar; beat != analysis->beats.begin();) {
@@ -519,8 +564,8 @@ namespace editor {
                                     const float line_gap = std::max(4.f, font_size * .08f);
                                     const float text_y = melody.y + (melody.height - (font_size + numeral_size) * 1.4f - line_gap) / 2;
                                     const auto first_vertex = draw.vertices.size();
-                                    if (draw.text(chord.name, font_size, center - text_width / 2, text_y, chord_background_text, text_width, true, true) > text_width) continue;
-                                    if (draw.text(chord.numeral, numeral_size, center - text_width / 2, text_y + font_size * 1.4f + line_gap, numeral_background_text, text_width, true, true) <= text_width) break;
+                                    if (draw.text(chord.name, font_size, center - text_width / 2, text_y, chord_background_text, text_width, true, true, melody) > text_width) continue;
+                                    if (draw.text(chord.numeral, numeral_size, center - text_width / 2, text_y + font_size * 1.4f + line_gap, numeral_background_text, text_width, true, true, melody) <= text_width) break;
                                     draw.vertices.resize(first_vertex);
                                 }
                             }
@@ -530,6 +575,7 @@ namespace editor {
                     }
                 }
                 draw.focus_levels = {1, 1};
+                draw.focus_tint = 0;
                 int bar = 0, first_bar = 0, last_bar = 0;
                 float last_label_x = -std::numeric_limits<float>::infinity();
                 float last_bar_x = -std::numeric_limits<float>::infinity();
@@ -539,6 +585,19 @@ namespace editor {
                     if (beat.position == 1) ++bar;
                     if (beat.time <= view_start) first_bar = bar;
                     if (beat.time < view_end) last_bar = bar;
+                    if (beat.position == 1) {
+                        const float x = static_cast<float>(std::round((content.x + timeline.fraction(beat.time * clip.sample_rate) * content.width) * draw.scale) / draw.scale);
+                        if (x + 50 > content.x && x < content.x + content.width && x - last_label_x >= 48) {
+                            const float emphasis = focus_strength * bar_focus[index];
+                            const float brightness = 1 - ui::focus_label_reduction * (focus_strength - emphasis);
+                            const bool current = focus_target == index && seconds >= beat.time && seconds < duration;
+                            const auto accent = current ? context_accent : ui::harmonic_color(ui::accent, bar_tints[index], 1.f);
+                            const float label_emphasis = current ? 1.f : emphasis;
+                            const ui::Color label_color{std::lerp(ui::muted.r, accent.r, label_emphasis) * brightness, std::lerp(ui::muted.g, accent.g, label_emphasis) * brightness, std::lerp(ui::muted.b, accent.b, label_emphasis) * brightness, 1};
+                            draw.text(std::to_wstring(bar), ui::label_size, x + 6, content.y + 2, label_color, 44, false, true, Rect{content.x, content.y, content.width, 30});
+                            last_label_x = x;
+                        }
+                    }
                     const bool last_beat = index + 1 == analysis->beats.size();
                     const double next_time = last_beat ? beat.time : analysis->beats[index + 1].time;
                     if (next_time < view_start || beat.time >= view_end) continue;
@@ -551,14 +610,6 @@ namespace editor {
                         const bool pulse = division == 0 && (!compound || (beat.position - 1) % 3 == 0);
                         const int level = downbeat ? 0 : pulse || (division > 0 && division % 4 == 0) ? 1 : division % 2 == 0 ? 2 : 3;
                         const float x = static_cast<float>(std::round((content.x + timeline.fraction(time * clip.sample_rate) * content.width) * draw.scale) / draw.scale);
-                        if (downbeat && x - last_label_x >= 48) {
-                            const float text_width = std::min(44.f, content.x + content.width - x - 6);
-                            const float emphasis = focus_strength * bar_focus[index];
-                            const float brightness = 1 - .45f * (focus_strength - emphasis);
-                            const ui::Color label_color{std::lerp(ui::muted.r, ui::accent.r, emphasis) * brightness, std::lerp(ui::muted.g, ui::accent.g, emphasis) * brightness, std::lerp(ui::muted.b, ui::accent.b, emphasis) * brightness, 1};
-                            if (text_width > 0) draw.text(std::to_wstring(bar), ui::label_size, x + 6, content.y + 2, label_color, text_width, false, true);
-                            last_label_x = x;
-                        }
                         if (level == 0) {
                             if (x - last_bar_x < 12) continue;
                             last_bar_x = x;
@@ -569,7 +620,8 @@ namespace editor {
                         const float right = std::min(content.x + content.width, mark_left + mark_width);
                         const auto color = grid_colors[level];
                         if (level < 2) draw.rect({left, content.y + (downbeat ? 23.f : 25.f), right - left, downbeat ? 7.f : 5.f}, downbeat ? ui::muted : ui::rule_color);
-                        draw.focus_levels = {.10f, .25f};
+                        draw.focus_levels = ui::focus_grid_levels;
+                        draw.focus_tint = ui::chord_grid_mix;
                         if (level < 2) {
                             draw.rect({left, waveform.y, right - left, waveform.height}, {color.r, color.g, color.b, .55f});
                             draw.rect({left, melody.y, right - left, melody.height}, color);
@@ -584,6 +636,7 @@ namespace editor {
                             }
                         }
                         draw.focus_levels = {1, 1};
+                        draw.focus_tint = 0;
                     }
                 }
                 view_label = last_bar ? std::format(L"Bars {}–{}", std::max(1, first_bar), last_bar) : L"Before bar 1";
@@ -615,32 +668,36 @@ namespace editor {
                             hover_range = ui::time_label(start, true) + L" — " + ui::time_label(end, true);
                         }
                         if (end <= view_start || start >= view_end) continue;
-                        const float x = content.x + static_cast<float>(timeline.fraction(std::max(start, view_start) * clip.sample_rate) * content.width);
-                        const float right = content.x + static_cast<float>(timeline.fraction(std::min(end, view_end) * clip.sample_rate) * content.width);
-                        const float segment_width = right - x;
+                        const float x = content.x + static_cast<float>((start - view_start) * pixels);
+                        const float segment_width = static_cast<float>((end - start) * pixels);
+                        const float right = std::min(area.x + area.width, x + segment_width);
                         const float brightness = active || hovered ? 1.f : std::lerp(1.f, .5f, focus_strength);
                         if (start >= view_start) {
                             const float boundary_x = std::max(area.x, std::round(x * draw.scale) / draw.scale);
                             const float boundary_width = std::min(right - boundary_x, std::round((active ? 2.f : 1.f) * draw.scale) / draw.scale);
-                            const auto boundary_color = hovered ? ui::foreground : active ? ui::accent : annotation_boundary;
+                            const auto boundary_color = active ? context_accent : hovered ? ui::foreground : annotation_boundary;
                             if (boundary_width > 0) draw.rect({boundary_x, area.y + 8, boundary_width, area.height - 16}, {boundary_color.r * brightness, boundary_color.g * brightness, boundary_color.b * brightness, 1});
                         }
                         const float padding = segment_width < 64 ? 4.f : 12.f;
                         const float text_width = segment_width - padding - (segment_width < 64 ? 4.f : 8.f);
                         if (text_width < ui::label_size) continue;
+                        const float text_x = std::max(area.x, x) + padding;
+                        const float clip_right = std::min(area.x + area.width, x + padding + text_width);
+                        if (clip_right <= text_x) continue;
+                        const Rect text_clip{text_x, area.y, clip_right - text_x, area.height};
                         auto display_label = label;
                         if (lane == 0) for (auto& character : display_label) character = static_cast<wchar_t>(std::towupper(character));
-                        const float maximum_font_size = lane == 0 ? ui::label_size : lane == 1 ? 19.f : 21.f;
-                        const auto base_color = active ? ui::accent : hovered ? ui::foreground : ui::muted;
+                        const float maximum_font_size = lane == 2 ? 21.f : 19.f;
+                        const auto base_color = active ? context_accent : hovered ? ui::foreground : ui::muted;
                         const ui::Color text_color{base_color.r * brightness, base_color.g * brightness, base_color.b * brightness, 1};
                         for (const float font_size : annotation_font_sizes) {
                             if (font_size > maximum_font_size) continue;
                             const float numeral_height = numeral.empty() ? 0.f : ui::label_size * 1.4f + 2;
                             const float text_y = area.y + (area.height - font_size * 1.4f - numeral_height) / 2;
                             const bool fit = font_size != annotation_font_sizes.back();
-                            const float advance = draw.text(display_label, font_size, x + padding, text_y, text_color, text_width, false, fit);
+                            const float advance = draw.text(display_label, font_size, text_x, text_y, text_color, text_width, false, fit, text_clip);
                             if (fit && advance > text_width) continue;
-                            if (!numeral.empty()) draw.text(numeral, ui::label_size, x + padding, text_y + font_size * 1.4f + 2, text_color, text_width);
+                            if (!numeral.empty()) draw.text(numeral, ui::label_size, text_x, text_y + font_size * 1.4f + 2, text_color, text_width, false, false, text_clip);
                             break;
                         }
                     }
@@ -652,15 +709,18 @@ namespace editor {
                     const float step = melody.height / (passage.high[melody_track] - passage.low[melody_track] + 1);
                     const float font_size = std::clamp(step * .36f, 11.f, 20.f);
                     const float text_height = font_size * 1.4f;
-                    const float text_width = rect.width - 18;
+                    const float full_width = static_cast<float>((segment.end - segment.start) * pixels);
+                    const float gap = segment.end == analysis->notes[segment.source].end ? std::min(hairline, full_width * .15f) : 0;
+                    const float text_width = full_width - gap - 18;
                     if (text_width <= 0 || rect.height < text_height + 4) return;
+                    const float text_x = rect.x + 9;
                     const float text_y = rect.y + (rect.height - text_height) / 2;
                     const std::wstring_view label = segment.label;
                     const auto split = label.find(L' ');
-                    const float advance = draw.text(label.substr(0, split), font_size, rect.x + 9, text_y, ui::note_text_color, text_width, false, true);
-                    if (advance < text_width) draw.text(label.substr(split), font_size, rect.x + 9 + advance, text_y, {ui::note_text_color.r, ui::note_text_color.g, ui::note_text_color.b, .72f}, text_width - advance, false, true);
+                    const float advance = draw.text(label.substr(0, split), font_size, text_x, text_y, ui::note_text_color, text_width, false, true, rect);
+                    if (advance < text_width) draw.text(label.substr(split), font_size, text_x + advance, text_y, {ui::note_text_color.r, ui::note_text_color.g, ui::note_text_color.b, .72f}, text_width - advance, false, true, rect);
                 };
-                draw.focus_levels = {.20f, .40f};
+                draw.focus_levels = ui::focus_note_levels;
                 for (const auto& segment : melody_notes) {
                     if (segment.end <= view_start || segment.start >= view_end) continue;
                     const auto& note = analysis->notes[segment.source];
@@ -675,6 +735,7 @@ namespace editor {
                     draw_note_label(segment, rect);
                 }
                 draw.focus_levels = {1, 1};
+                draw.focus_tint = 0;
                 if (hovered_note) {
                     const auto hovered_rect = note_rect(*hovered_note);
                     const auto& note = analysis->notes[hovered_note->source];
@@ -689,14 +750,15 @@ namespace editor {
                     hover_range = std::format(L"{} — {}   ·   {:.3f} s", ui::time_label(note.start, true), ui::time_label(note.end, true), note.end - note.start);
                 }
                 if (focus_strength > 0) {
-                    const float underline_height = std::round(2 * draw.scale) / draw.scale;
+                    const float underline_height = std::round(ui::focus_underline_width * draw.scale) / draw.scale;
                     for (std::size_t index = 0; index < bar_focus.size(); ++index) {
                         if (bar_focus[index] == 0) continue;
                         const auto next = std::ranges::find(analysis->beats.begin() + index + 1, analysis->beats.end(), 1, &musicia::Beat::position);
                         const double end = next == analysis->beats.end() ? duration : next->time;
                         const float left = std::clamp(content.x + static_cast<float>((analysis->beats[index].time - view_start) * pixels), content.x, content.x + content.width);
                         const float right = std::clamp(content.x + static_cast<float>((end - view_start) * pixels), content.x, content.x + content.width);
-                        if (right > left) draw.rect({left, content.y + 30 - underline_height, right - left, underline_height}, {ui::accent.r, ui::accent.g, ui::accent.b, focus_strength * bar_focus[index]});
+                        const auto accent = ui::harmonic_color(ui::accent, bar_tints[index], 1.f);
+                        if (right > left) draw.rect({left, content.y + 30 - underline_height, right - left, underline_height}, {accent.r, accent.g, accent.b, focus_strength * bar_focus[index]});
                     }
                 }
                 const auto beat = std::ranges::upper_bound(analysis->beats, seconds, {}, &musicia::Beat::time);
@@ -712,10 +774,10 @@ namespace editor {
                 const auto stage = progress.stage.load();
                 context = stage == musicia::AnalysisStage::loading ? L"Loading model..." : std::format(L"Analyzing {} / {}", progress.window.load(), progress.windows.load());
             }
-            draw.text(key_label, ui::value_size, ui::key_x, ui::toolbar_y, key_label == L"—" ? ui::muted : ui::foreground, 160);
-            draw.text(bpm_label, ui::value_size, ui::tempo_x, ui::toolbar_y, bpm_label == L"—" ? ui::muted : ui::foreground, 60);
+            draw.text(key_label, ui::value_size, ui::key_x, ui::toolbar_y, key_label == L"—" ? ui::muted : context_accent, 160);
+            draw.text(bpm_label, ui::value_size, ui::tempo_x, ui::toolbar_y, bpm_label == L"—" ? ui::muted : context_accent, 60);
             draw.text(L"BPM", ui::unit_size, ui::tempo_unit_x, ui::toolbar_y + 7, ui::muted, 35);
-            draw.text(meter_label, ui::secondary_size, ui::meter_x, ui::toolbar_y + 2, ui::muted, 60);
+            draw.text(meter_label, ui::secondary_size, ui::meter_x, ui::toolbar_y + 2, meter_label == L"—" ? ui::muted : context_accent, 60);
             draw.rect({ui::outer_margin, height - ui::footer_height, width - 2 * ui::outer_margin, hairline}, ui::rule_color);
             draw.text(context, ui::label_size, ui::label_x, height - 28, status_color, width - 680);
             draw.text(view_label, ui::label_size, width - 180, overview.y - 20, ui::muted, 152);
@@ -771,7 +833,8 @@ namespace editor {
             }
             const float view_left = overview.x + static_cast<float>(timeline.first / clip.frames * overview.width);
             const float view_right = overview.x + static_cast<float>((timeline.first + timeline.count) / clip.frames * overview.width);
-            draw.rect({view_left, overview.y, view_right - view_left, overview.height}, {ui::accent.r, ui::accent.g, ui::accent.b, .09f});
+            const ui::Color overview_accent{context_accent.r * .8f, context_accent.g * .8f, context_accent.b * .8f, 1};
+            draw.rect({view_left, overview.y, view_right - view_left, overview.height}, {context_accent.r, context_accent.g, context_accent.b, .09f});
             draw.wave_layer = static_cast<std::uint32_t>(draw.vertices.size());
             draw.wave_rect = waveform;
             draw.overview_rect = overview;
@@ -780,16 +843,16 @@ namespace editor {
 
             draw.rect({overview.x, overview.y, view_left - overview.x, overview.height}, {ui::background.r, ui::background.g, ui::background.b, .35f});
             draw.rect({view_right, overview.y, overview.x + overview.width - view_right, overview.height}, {ui::background.r, ui::background.g, ui::background.b, .35f});
-            draw.rect({view_left, overview.y, view_right - view_left, hairline}, ui::accent);
-            draw.rect({view_left, overview.y + overview.height - hairline, view_right - view_left, hairline}, ui::accent);
-            draw.rect({view_left, overview.y, hairline, overview.height}, ui::accent);
-            draw.rect({view_right - hairline, overview.y, hairline, overview.height}, ui::accent);
+            draw.rect({view_left, overview.y, view_right - view_left, hairline}, overview_accent);
+            draw.rect({view_left, overview.y + overview.height - hairline, view_right - view_left, hairline}, overview_accent);
+            draw.rect({view_left, overview.y, hairline, overview.height}, overview_accent);
+            draw.rect({view_right - hairline, overview.y, hairline, overview.height}, overview_accent);
             if (overview_hover || drag == Drag::pan_overview || drag == Drag::view || drag == Drag::left || drag == Drag::right) {
-                draw.rect({view_left - 1, overview.y + 14, 2, 14}, ui::accent, 1);
-                draw.rect({view_right - 1, overview.y + 14, 2, 14}, ui::accent, 1);
+                draw.rect({view_left - 1, overview.y + 14, 2, 14}, context_accent, 1);
+                draw.rect({view_right - 1, overview.y + 14, 2, 14}, context_accent, 1);
             }
             if (analysis) {
-                draw.focus_levels = {.10f, .25f};
+                draw.focus_levels = ui::focus_grid_levels;
                 for (std::size_t key = 1; key < analysis->keys.size(); ++key) {
                     const auto& change = analysis->keys[key];
                     if (change.label == analysis->keys[key - 1].label || change.start < view_start || change.start >= view_end) continue;
@@ -797,16 +860,17 @@ namespace editor {
                     draw.rect({x, lanes[1].y, hairline, content.y + content.height - lanes[1].y}, {ui::accent.r, ui::accent.g, ui::accent.b, .35f});
                 }
                 draw.focus_levels = {1, 1};
+                draw.focus_tint = 0;
             }
             if (main_hover && drag == Drag::none) draw.rect({std::round(hover_x * draw.scale) / draw.scale, content.y, hairline, content.height}, {ui::foreground.r, ui::foreground.g, ui::foreground.b, .3f});
             if (current_frame >= timeline.first && current_frame <= timeline.first + timeline.count) {
                 const float playhead_width = std::round(ui::playhead_width * draw.scale) / draw.scale;
                 const float x = static_cast<float>(std::round((content.x + timeline.fraction(current_frame) * content.width - playhead_width / 2) * draw.scale) / draw.scale);
                 const float left = std::max(content.x, x), right = std::min(content.x + content.width, x + playhead_width);
-                draw.rect({left, content.y, right - left, content.height}, ui::accent);
+                draw.rect({left, content.y, right - left, content.height}, context_accent);
             }
             const float global_x = overview.x + static_cast<float>(current_frame / clip.frames * overview.width);
-            draw.rect({global_x, overview.y + 2, hairline, overview.height - 4}, ui::accent);
+            draw.rect({global_x, overview.y + 2, hairline, overview.height - 4}, context_accent);
             if ((main_hover || overview_hover) && drag == Drag::none) {
                 const float tooltip_width = hover_label.empty() ? 90.f : 320.f;
                 const float tooltip_height = hover_label.empty() ? 29.f : 62.f;
@@ -982,6 +1046,7 @@ namespace editor {
                         analysis = std::move(completed);
                         bar_focus.assign(analysis->beats.size(), 0.f);
                         focus_from.assign(analysis->beats.size(), 0.f);
+                        bar_tints.assign(analysis->beats.size(), std::array<float, 4>{});
                         melody_track = std::ranges::any_of(analysis->notes, [](const auto& note) { return note.track == 0; }) ? 0 : 1;
                         rebuild_analysis_view();
                         if (initial_view) {

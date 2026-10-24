@@ -6,11 +6,16 @@ struct Push {
     float4 screen;
     float4 color;
     float focus_strength;
+    float waveform_tint;
 };
 [[vk::push_constant]] Push push;
 [[vk::binding(0)]] Texture2D<float> glyph_atlas;
 [[vk::binding(2)]] SamplerState glyph_sampler;
-[[vk::binding(3)]] StructuredBuffer<float2> focus_columns;
+struct FocusColumn {
+    float4 emphasis;
+    float4 tint;
+};
+[[vk::binding(3)]] StructuredBuffer<FocusColumn> focus_columns;
 
 struct Vertex {
     float2 position : POSITION;
@@ -18,6 +23,7 @@ struct Vertex {
     float4 color : COLOR0;
     float4 shape : TEXCOORD1;
     float2 focus_levels : TEXCOORD2;
+    float focus_tint : TEXCOORD3;
 };
 struct Fragment {
     float4 position : SV_Position;
@@ -25,6 +31,7 @@ struct Fragment {
     float4 color : COLOR0;
     nointerpolation float4 shape : TEXCOORD1;
     nointerpolation float2 focus_levels : TEXCOORD2;
+    nointerpolation float focus_tint : TEXCOORD3;
 };
 
 [shader("vertex")]
@@ -35,6 +42,7 @@ Fragment vertex_main(Vertex vertex) {
     result.color = vertex.color;
     result.shape = vertex.shape;
     result.focus_levels = vertex.focus_levels;
+    result.focus_tint = vertex.focus_tint;
     return result;
 }
 
@@ -53,9 +61,18 @@ float4 fragment_main(Fragment fragment) : SV_Target {
     }
     float brightness = 1;
     if (push.focus_strength > 0 && fragment.focus_levels.x < 1) {
-        float2 emphasis = focus_columns[uint(fragment.position.x)];
+        float2 emphasis = focus_columns[uint(fragment.position.x)].emphasis.xy;
         brightness -= (1 - fragment.focus_levels.x) * (push.focus_strength - emphasis.x);
         brightness += (fragment.focus_levels.y - fragment.focus_levels.x) * emphasis.y;
     }
-    return float4(linear_color(fragment.color.rgb * brightness) * alpha, alpha);
+    float3 color = linear_color(fragment.color.rgb * brightness);
+    if (fragment.focus_tint > 0) {
+        float4 tint = focus_columns[uint(fragment.position.x)].tint;
+        if (tint.a > 0) {
+            float3 luminance = float3(0.2126, 0.7152, 0.0722);
+            float3 toned = tint.rgb * (dot(color, luminance) / dot(tint.rgb, luminance));
+            color = lerp(color, toned, fragment.focus_tint * tint.a);
+        }
+    }
+    return float4(color * alpha, alpha);
 }

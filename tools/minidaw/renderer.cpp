@@ -12,6 +12,7 @@ import vulkan;
 namespace minidaw {
     struct Push {
         std::array<float, 4> screen{};
+        float focus_strength{};
     };
 
     Buffer::Buffer(const vk::raii::PhysicalDevice& physical, const vk::raii::Device& device, vk::DeviceSize size, vk::BufferUsageFlags usage) {
@@ -61,16 +62,18 @@ namespace minidaw {
         atlas_view    = vk::raii::ImageView(device, {.image = *atlas, .viewType = vk::ImageViewType::e2D, .format = vk::Format::eR8Unorm, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}});
         sampler      = vk::raii::Sampler(device, {.magFilter = vk::Filter::eLinear, .minFilter = vk::Filter::eLinear, .mipmapMode = vk::SamplerMipmapMode::eNearest, .addressModeU = vk::SamplerAddressMode::eClampToEdge, .addressModeV = vk::SamplerAddressMode::eClampToEdge, .addressModeW = vk::SamplerAddressMode::eClampToEdge});
         atlas_staging = Buffer(physical, device, atlas_pixels.size(), vk::BufferUsageFlagBits::eTransferSrc);
-        vertex_buffer = Buffer(physical, device, 4 * 1024 * 1024, vk::BufferUsageFlagBits::eVertexBuffer);
+        vertex_buffer = Buffer(physical, device, vertex_capacity, vk::BufferUsageFlagBits::eVertexBuffer);
+        focus_buffer = Buffer(physical, device, focus_capacity, vk::BufferUsageFlagBits::eStorageBuffer);
 
-        const std::array bindings{vk::DescriptorSetLayoutBinding{.binding = 0, .descriptorType = vk::DescriptorType::eSampledImage, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}, vk::DescriptorSetLayoutBinding{.binding = 2, .descriptorType = vk::DescriptorType::eSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}};
+        const std::array bindings{vk::DescriptorSetLayoutBinding{.binding = 0, .descriptorType = vk::DescriptorType::eSampledImage, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}, vk::DescriptorSetLayoutBinding{.binding = 2, .descriptorType = vk::DescriptorType::eSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}, vk::DescriptorSetLayoutBinding{.binding = 3, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}};
         descriptor_layout = vk::raii::DescriptorSetLayout(device, {.bindingCount = static_cast<std::uint32_t>(bindings.size()), .pBindings = bindings.data()});
-        const std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1}, vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1}};
+        const std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1}, vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1}, vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 1}};
         descriptor_pool = vk::raii::DescriptorPool(device, {.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, .maxSets = 1, .poolSizeCount = static_cast<std::uint32_t>(sizes.size()), .pPoolSizes = sizes.data()});
         descriptor     = std::move(vk::raii::DescriptorSets(device, {.descriptorPool = *descriptor_pool, .descriptorSetCount = 1, .pSetLayouts = &*descriptor_layout}).front());
         const vk::DescriptorImageInfo image_info{.imageView = *atlas_view, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
         const vk::DescriptorImageInfo sampler_info{.sampler = *sampler};
-        const std::array writes{vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampledImage, .pImageInfo = &image_info}, vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampler, .pImageInfo = &sampler_info}};
+        const vk::DescriptorBufferInfo focus_info{.buffer = *focus_buffer.handle, .range = vk::WholeSize};
+        const std::array writes{vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampledImage, .pImageInfo = &image_info}, vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampler, .pImageInfo = &sampler_info}, vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &focus_info}};
         device.updateDescriptorSets(writes, {});
         const vk::PushConstantRange push_range{.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .size = sizeof(Push)};
         pipeline_layout = vk::raii::PipelineLayout(device, {.setLayoutCount = 1, .pSetLayouts = &*descriptor_layout, .pushConstantRangeCount = 1, .pPushConstantRanges = &push_range});
@@ -91,7 +94,7 @@ namespace minidaw {
                 stages[i]  = {.stage = i == 0 ? vk::ShaderStageFlagBits::eVertex : vk::ShaderStageFlagBits::eFragment, .module = *modules[i], .pName = "main"};
             }
             const vk::VertexInputBindingDescription binding{.binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex};
-            const std::array attributes{vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32Sfloat, 0}, vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32Sfloat, 8}, vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32A32Sfloat, 16}, vk::VertexInputAttributeDescription{3, 0, vk::Format::eR32G32B32A32Sfloat, 32}};
+            const std::array attributes{vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32Sfloat, 0}, vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32Sfloat, 8}, vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32A32Sfloat, 16}, vk::VertexInputAttributeDescription{3, 0, vk::Format::eR32G32B32A32Sfloat, 32}, vk::VertexInputAttributeDescription{4, 0, vk::Format::eR32G32Sfloat, 48}};
             const vk::PipelineVertexInputStateCreateInfo input{.vertexBindingDescriptionCount = 1u, .pVertexBindingDescriptions = &binding, .vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size()), .pVertexAttributeDescriptions = attributes.data()};
             const vk::PipelineInputAssemblyStateCreateInfo assembly{.topology = vk::PrimitiveTopology::eTriangleList};
             const vk::PipelineViewportStateCreateInfo viewport{.viewportCount = 1, .scissorCount = 1};
@@ -154,16 +157,16 @@ namespace minidaw {
         area.y *= scale;
         area.width *= scale;
         area.height *= scale;
-        for (const auto& corner : std::array{std::array{0.f, 0.f}, std::array{1.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 1.f}}) vertices.push_back({area.x + area.width * corner[0], area.y + area.height * corner[1], area.width * corner[0], area.height * corner[1], color, radius > 0 ? 2.f : 0.f, radius * scale, area.width, area.height});
+        for (const auto& corner : std::array{std::array{0.f, 0.f}, std::array{1.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 1.f}}) vertices.push_back({area.x + area.width * corner[0], area.y + area.height * corner[1], area.width * corner[0], area.height * corner[1], color, radius > 0 ? 2.f : 0.f, radius * scale, area.width, area.height, focus_levels});
     }
 
-    float Renderer::text(std::wstring_view value, float size, float x, float y, ui::Color color, float width, bool centered, bool fit) {
+    float Renderer::text(std::wstring_view value, float size, float x, float y, ui::Color color, float width, bool centered, bool fit, std::optional<Rect> clip) {
         Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
         auto result = fonts->CreateTextFormat(ui::font_family, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size * scale, L"en-US", &format);
         if (FAILED(result)) throw std::runtime_error("Unable to create text format.");
         format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         if (centered) format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        if (!fit) {
+        if (!fit && !clip) {
             Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis;
             fonts->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
             const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
@@ -178,6 +181,13 @@ namespace minidaw {
         const float advance = metrics.widthIncludingTrailingWhitespace / scale;
         if (fit && advance > width) return advance;
         text_color = color;
+        text_clip = clip;
+        if (text_clip) {
+            text_clip->x *= scale;
+            text_clip->y *= scale;
+            text_clip->width *= scale;
+            text_clip->height *= scale;
+        }
         result    = layout->Draw(nullptr, this, x * scale, y * scale);
         if (FAILED(result)) throw std::runtime_error("Unable to rasterize text.");
         return advance;
@@ -199,6 +209,14 @@ namespace minidaw {
             vertex_buffer   = Buffer(physical, device, vertex_capacity, vk::BufferUsageFlagBits::eVertexBuffer);
         }
         std::memcpy(vertex_buffer.mapped, vertices.data(), vertices.size() * sizeof(Vertex));
+        const auto focus_bytes = focus_columns.size() * sizeof(focus_columns.front());
+        if (focus_bytes > focus_capacity) {
+            focus_capacity = std::bit_ceil(focus_bytes);
+            focus_buffer = Buffer(physical, device, focus_capacity, vk::BufferUsageFlagBits::eStorageBuffer);
+            const vk::DescriptorBufferInfo focus_info{.buffer = *focus_buffer.handle, .range = vk::WholeSize};
+            device.updateDescriptorSets(vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &focus_info}, {});
+        }
+        std::memcpy(focus_buffer.mapped, focus_columns.data(), focus_bytes);
         command.reset();
         command.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
         if (atlas_dirty) {
@@ -225,7 +243,7 @@ namespace minidaw {
         command.setScissor(0, vk::Rect2D{{0, 0}, extent});
         command.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline_layout, 0, *descriptor, {});
         command.bindVertexBuffers(0, *vertex_buffer.handle, vk::DeviceSize{0});
-        Push push{.screen = {static_cast<float>(extent.width), static_cast<float>(extent.height), 0, scale}};
+        Push push{.screen = {static_cast<float>(extent.width), static_cast<float>(extent.height), 0, scale}, .focus_strength = focus_strength};
         command.pushConstants<Push>(*pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, push);
         command.bindPipeline(vk::PipelineBindPoint::eGraphics, *ui_pipeline);
         command.draw(static_cast<std::uint32_t>(vertices.size()), 1, 0, 0);
@@ -323,7 +341,17 @@ namespace minidaw {
                 const float gx        = std::round(x + direction * offset.advanceOffset - (direction < 0 ? run->glyphAdvances[i] : 0)) + glyph.left;
                 const float gy        = std::round(y - offset.ascenderOffset) + glyph.top;
                 if (glyph.width && glyph.height) {
-                    for (const auto& corner : std::array{std::array{0.f, 0.f}, std::array{1.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 1.f}}) vertices.push_back({gx + glyph.width * corner[0], gy + glyph.height * corner[1], (glyph.x + glyph.width * corner[0]) / 2048.f, (glyph.y + glyph.height * corner[1]) / 2048.f, text_color, 1});
+                    const float left = text_clip ? std::max(gx, text_clip->x) : gx;
+                    const float top = text_clip ? std::max(gy, text_clip->y) : gy;
+                    const float right = text_clip ? std::min(gx + glyph.width, text_clip->x + text_clip->width) : gx + glyph.width;
+                    const float bottom = text_clip ? std::min(gy + glyph.height, text_clip->y + text_clip->height) : gy + glyph.height;
+                    if (right > left && bottom > top) {
+                        for (const auto& corner : std::array{std::array{0.f, 0.f}, std::array{1.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 1.f}}) {
+                            const float px = std::lerp(left, right, corner[0]);
+                            const float py = std::lerp(top, bottom, corner[1]);
+                            vertices.push_back({px, py, (glyph.x + px - gx) / 2048.f, (glyph.y + py - gy) / 2048.f, text_color, 1, 0, 0, 0, focus_levels});
+                        }
+                    }
                 }
                 x += direction * run->glyphAdvances[i];
             }

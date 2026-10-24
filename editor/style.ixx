@@ -17,6 +17,16 @@ export namespace ui {
     inline constexpr std::array note_border_colors{Color{238 / 255.f, 196 / 255.f, 207 / 255.f, 1}, Color{176 / 255.f, 215 / 255.f, 237 / 255.f, 1}};
     inline constexpr Color note_text_color{16 / 255.f, 19 / 255.f, 18 / 255.f, 1};
     inline constexpr Color note_active_border{1, 1, 1, 1};
+    inline constexpr std::array chord_colors{
+        Color{114 / 255.f, 159 / 255.f, 240 / 255.f, 1},
+        Color{205 / 255.f, 187 / 255.f, 118 / 255.f, 1},
+        Color{112 / 255.f, 190 / 255.f, 199 / 255.f, 1},
+        Color{130 / 255.f, 214 / 255.f, 114 / 255.f, 1},
+        Color{240 / 255.f, 128 / 255.f, 90 / 255.f, 1},
+        Color{101 / 255.f, 185 / 255.f, 158 / 255.f, 1},
+        Color{222 / 255.f, 115 / 255.f, 151 / 255.f, 1},
+        Color{189 / 255.f, 139 / 255.f, 229 / 255.f, 1}
+    };
     inline constexpr Color accent{156 / 255.f, 220 / 255.f, 1, 1};
     inline constexpr Color surface_color{14 / 255.f, 14 / 255.f, 14 / 255.f, 1};
     inline constexpr Color active_surface{24 / 255.f, 24 / 255.f, 24 / 255.f, 1};
@@ -44,6 +54,23 @@ export namespace ui {
     inline constexpr float output_info_right{634}, master_right{464}, output_meter_right{331}, output_meter_width{156}, peak_right{149}, overload_right{74};
     inline constexpr float meter_floor{-60}, meter_release{24}, peak_release{12};
     inline constexpr std::chrono::milliseconds peak_hold{1500}, follow_delay{600}, follow_duration{700};
+    inline constexpr std::chrono::milliseconds focus_duration{360}, focus_fade_duration{200};
+    inline constexpr std::array<float, 2> focus_grid_levels{.10f, .25f}, focus_note_levels{.20f, .40f}, focus_annotation_levels{.15f, .30f};
+    inline constexpr float focus_label_reduction{.45f}, focus_underline_width{4};
+
+    inline constexpr std::chrono::milliseconds chord_color_duration{240};
+    inline constexpr float chord_color_fraction{.35f}, chord_grid_mix{1.f}, chord_annotation_mix{1.f}, chord_wave_mix{.94f};
+
+    Color harmonic_color(Color base, const std::array<float, 4>& tint, float amount) {
+        if (tint[3] == 0) return base;
+        std::array channels{base.r, base.g, base.b};
+        for (std::size_t channel = 0; channel < channels.size(); ++channel) {
+            const float source = channels[channel] <= .04045f ? channels[channel] / 12.92f : std::pow((channels[channel] + .055f) / 1.055f, 2.4f);
+            const float value = std::lerp(source, tint[channel] / tint[3], amount * tint[3]);
+            channels[channel] = value <= .0031308f ? value * 12.92f : 1.055f * std::pow(value, 1.f / 2.4f) - .055f;
+        }
+        return {channels[0], channels[1], channels[2], base.a};
+    }
 
     std::wstring time_label(double seconds, bool precise) {
         const auto hundredths = static_cast<std::uint64_t>(std::max(0.0, seconds) * 100);

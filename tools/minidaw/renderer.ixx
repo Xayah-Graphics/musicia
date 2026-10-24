@@ -23,6 +23,7 @@ export namespace minidaw {
         float x{}, y{}, u{}, v{};
         ui::Color color;
         float mode{}, radius{}, width{}, height{};
+        std::array<float, 2> focus_levels{1, 1};
     };
 
     struct Buffer {
@@ -42,6 +43,9 @@ export namespace minidaw {
     struct Renderer final : IDWriteTextRenderer {
         float scale{1};
         std::vector<Vertex> vertices;
+        std::vector<std::array<float, 2>> focus_columns;
+        std::array<float, 2> focus_levels{1, 1};
+        float focus_strength{};
 
         explicit Renderer(HWND window);
         ~Renderer();
@@ -50,7 +54,7 @@ export namespace minidaw {
         void resize();
         void reset_fonts();
         void rect(Rect area, ui::Color color, float radius = 0);
-        float text(std::wstring_view value, float size, float x, float y, ui::Color color, float width = 2000, bool centered = false, bool fit = false);
+        float text(std::wstring_view value, float size, float x, float y, ui::Color color, float width = 2000, bool centered = false, bool fit = false, std::optional<Rect> clip = std::nullopt);
         void draw();
 
     private:
@@ -68,6 +72,8 @@ export namespace minidaw {
         vk::raii::Sampler sampler{nullptr};
         Buffer atlas_staging;
         Buffer vertex_buffer;
+        Buffer focus_buffer;
+        std::size_t focus_capacity{32 * 1024};
         std::size_t vertex_capacity{4 * 1024 * 1024};
         vk::raii::DescriptorSetLayout descriptor_layout{nullptr};
         vk::raii::DescriptorPool descriptor_pool{nullptr};
@@ -90,6 +96,7 @@ export namespace minidaw {
         Microsoft::WRL::ComPtr<IDWriteTypography> typography;
         std::map<std::tuple<IDWriteFontFace*, std::uint16_t, float>, Glyph> glyphs;
         ui::Color text_color;
+        std::optional<Rect> text_clip;
 
         HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) override;
         ULONG STDMETHODCALLTYPE AddRef() override;

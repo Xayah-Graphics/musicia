@@ -48,6 +48,12 @@ export namespace editor {
         std::optional<std::chrono::steady_clock::time_point> follow_resume_at;
         double follow_from{};
         std::vector<float> bar_focus, focus_from;
+        std::vector<std::array<float, 4>> bar_tints;
+        std::array<float, 4> bar_tint_from{};
+        std::array<float, 4> chord_tint{}, chord_tint_from{}, chord_tint_to{};
+        std::optional<int> chord_color_target;
+        std::chrono::steady_clock::time_point chord_color_started{};
+        std::chrono::duration<double> chord_color_span{ui::chord_color_duration};
         std::optional<std::size_t> focus_target;
         float focus_strength{}, focus_strength_from{}, focus_strength_target{};
         bool focus_animating{};
@@ -68,6 +74,7 @@ export namespace editor {
         struct ChordSegment {
             double start{}, end{};
             std::wstring name, numeral;
+            int color_index{-1};
         };
         std::vector<ChordSegment> chord_segments;
         struct MelodyPassage {

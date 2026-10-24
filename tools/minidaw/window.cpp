@@ -67,6 +67,9 @@ namespace minidaw {
         const auto& sequence = document.sequence;
         const double bar_length = sequence.beats * 4.0 / sequence.beat_unit;
         draw.vertices.clear();
+        draw.focus_columns.assign(static_cast<std::size_t>(std::lround(width * draw.scale)), std::array{0.f, 0.f});
+        draw.focus_levels = {1, 1};
+        draw.focus_strength = 0;
         grid = {ui::timeline_x, ui::ruler_y + 20, width - ui::timeline_x - ui::right_margin, height - 218};
         pedal_lane = {grid.x, grid.y + grid.height, grid.width, 32};
         constrain_pitch_view();
@@ -85,8 +88,24 @@ namespace minidaw {
         draw.text(std::to_wstring(sequence.bpm), ui::value_size, ui::tempo_x, ui::toolbar_y, ui::foreground, 60);
         draw.text(L"BPM", ui::unit_size, ui::tempo_unit_x, ui::toolbar_y + 7, ui::muted, 35);
         draw.text(std::format(L"{}/{}", sequence.beats, sequence.beat_unit), ui::secondary_size, ui::meter_x, ui::toolbar_y + 2, ui::muted, 60);
-        const double pending = engine->seek.load();
-        const double position = pending >= 0 ? pending : engine->position.load();
+        const double position = engine->position();
+        const auto now = std::chrono::steady_clock::now();
+        if (engine->playing) {
+            if ((gesture != Gesture::none && gesture != Gesture::gain) || input || help || popup != Popup::none) {
+                follow_from = document.first_beat;
+                follow_resume_at = now + ui::follow_delay;
+            } else {
+                const double target = std::max(0.0, position - grid.width / (2 * document.pixels_per_beat));
+                if (follow_resume_at) {
+                    const double elapsed = std::chrono::duration<double>(now - *follow_resume_at).count();
+                    const double phase = std::clamp(elapsed / std::chrono::duration<double>(ui::follow_duration).count(), 0., 1.);
+                    const double blend = phase * phase * phase * (10 + phase * (6 * phase - 15));
+                    document.first_beat = std::lerp(follow_from, target, blend);
+                    if (phase == 1) follow_resume_at.reset();
+                } else document.first_beat = target;
+                std::tie(hover, hovered) = hit(pointer_x, pointer_y);
+            }
+        }
         draw.text(ui::time_label(position * 60.0 / sequence.bpm, true), ui::value_size, width - ui::clock_right, ui::toolbar_y, ui::foreground, 115);
         constexpr std::array steps{1.0, .5, .25, .125, 2.0 / 3, 1.0 / 3, 1.0 / 6};
         constexpr std::array step_names{L"1/4", L"1/8", L"1/16", L"1/32", L"1/4 T", L"1/8 T", L"1/16 T"};
@@ -96,6 +115,48 @@ namespace minidaw {
         const float rh = static_cast<float>(document.row_height);
         const auto x_at = [&](double beat) { return grid.x + static_cast<float>(beat - document.first_beat) * px; };
         const float end_x = grid.x + grid.width, end_y = grid.y + grid.height;
+        double transition_phase = 1;
+        if (focus_target) {
+            transition_phase = std::clamp(std::chrono::duration<double>(now - focus_started).count() / std::chrono::duration<double>(ui::focus_duration).count(), 0., 1.);
+            const float blend = static_cast<float>(transition_phase * transition_phase * transition_phase * (10 + transition_phase * (6 * transition_phase - 15)));
+            for (auto& [bar, weight] : bar_focus) weight = std::lerp(focus_from.at(bar), bar == *focus_target ? 1.f : 0.f, blend);
+            if (transition_phase == 1) std::erase_if(bar_focus, [](const auto& item) { return item.second == 0; });
+        }
+        float fade_phase = std::clamp(std::chrono::duration<float>(now - focus_fade_started).count() / std::chrono::duration<float>(ui::focus_fade_duration).count(), 0.f, 1.f);
+        const float fade_blend = fade_phase * fade_phase * fade_phase * (10 + fade_phase * (6 * fade_phase - 15));
+        focus_strength = std::lerp(focus_strength_from, focus_strength_target, fade_blend);
+        const auto focus_bar = static_cast<std::int64_t>(std::floor(position / bar_length));
+        if (focus_target != focus_bar) {
+            if (!focus_target || focus_strength == 0) bar_focus = {{focus_bar, 1.f}};
+            else bar_focus.try_emplace(focus_bar, 0.f);
+            focus_from = bar_focus;
+            focus_target = focus_bar;
+            focus_started = now;
+            transition_phase = 0;
+        }
+        const bool editing = gesture == Gesture::marquee || gesture == Gesture::move || gesture == Gesture::copy || gesture == Gesture::resize_end || gesture == Gesture::create || gesture == Gesture::velocity;
+        const float focus_target_strength = engine->playing && !editing ? 1.f : 0.f;
+        if (focus_target_strength != focus_strength_target) {
+            focus_strength_from = focus_strength;
+            focus_strength_target = focus_target_strength;
+            focus_fade_started = now;
+            fade_phase = 0;
+        }
+        focus_animating = fade_phase < 1 && focus_strength_from != focus_strength_target;
+        if (focus_strength > 0 && transition_phase < 1 && focus_from.at(*focus_target) != 1) focus_animating = true;
+        draw.focus_strength = focus_strength;
+        if (focus_strength > 0) {
+            for (const auto& [bar, weight] : bar_focus) {
+                if (weight == 0) continue;
+                std::array<std::size_t, 4> columns;
+                for (std::size_t index = 0; index < columns.size(); ++index) columns[index] = static_cast<std::size_t>(std::lround(std::clamp(x_at((bar + static_cast<double>(index) - 1) * bar_length), grid.x, end_x) * draw.scale));
+                const float strength = focus_strength * weight;
+                for (std::size_t band = 0; band < 3; ++band) {
+                    const std::size_t channel = band == 1 ? 0 : 1;
+                    for (std::size_t column = columns[band]; column < columns[band + 1]; ++column) draw.focus_columns[column][channel] += strength;
+                }
+            }
+        }
         const auto [lowest, highest] = degree_range();
         const int first_degree = std::min(highest, static_cast<int>(std::ceil(document.top_degree)));
         for (int degree = first_degree; degree >= lowest; --degree) {
@@ -104,10 +165,12 @@ namespace minidaw {
             const float y = std::max(grid.y, top), bottom = std::min(end_y, top + rh);
             if (bottom <= y) continue;
             const bool tonic = degree % 7 == 0;
+            draw.focus_levels = ui::focus_grid_levels;
             if (tonic) draw.rect({grid.x, y, grid.width, bottom - y}, ui::tonic_row_color);
-            if (hover == Gesture::audition && grid.x > pointer_x && pointer_y >= y && pointer_y < bottom) draw.rect({28, y, grid.x - 32, bottom - y}, ui::active_surface, 3);
             draw.rect({grid.x, bottom - 1, grid.width, 1}, ui::pitch_grid);
-            if (top >= grid.y && top + rh <= end_y) draw.text(document.label(degree), ui::label_size, ui::label_x, top + (rh - 15) / 2, tonic ? ui::foreground : ui::muted, 97);
+            draw.focus_levels = {1, 1};
+            if (hover == Gesture::audition && grid.x > pointer_x && pointer_y >= y && pointer_y < bottom) draw.rect({28, y, grid.x - 32, bottom - y}, ui::active_surface, 3);
+            draw.text(document.label(degree), ui::label_size, ui::label_x, top + (rh - 15) / 2, tonic ? ui::foreground : ui::muted, 97, false, false, Rect{ui::label_x, grid.y, 97, grid.height});
         }
         const int snap_divisions = snap == 2.0 / 3 ? 3 : static_cast<int>(std::round(1 / snap));
         const int divisions = std::lcm(snap_divisions, sequence.beat_unit / 4);
@@ -119,7 +182,7 @@ namespace minidaw {
         const int bar_stride = std::max(1, static_cast<int>(std::ceil(12 / (px * bar_length))));
         const int stride = px >= 12 ? std::gcd(minor_stride, beat_steps) : bar_steps * bar_stride;
         const int label_stride = bar_stride * std::max(1, static_cast<int>(std::ceil(48 / (px * bar_length * bar_stride))));
-        const int first_line = static_cast<int>(std::floor(document.first_beat * divisions / stride)) * stride;
+        const int first_line = static_cast<int>(std::floor(document.first_beat * divisions / (bar_steps * label_stride))) * bar_steps * label_stride;
         const int last_line = static_cast<int>(std::ceil((document.first_beat + grid.width / px) * divisions / stride)) * stride;
         constexpr std::array mark_sizes{ui::bar_width, ui::beat_width, ui::dot_width, ui::dot_width, ui::beat_width};
         constexpr std::array mark_colors{ui::bar_grid, ui::beat_grid, ui::eighth_grid, ui::sixteenth_grid, ui::thirty_second_grid};
@@ -140,6 +203,7 @@ namespace minidaw {
             const float mark_size = std::round(mark_sizes[level] * draw.scale) / draw.scale;
             const float mark_left = std::round((x - mark_size * .5f) * draw.scale) / draw.scale;
             const float left = std::max(grid.x, mark_left), right = std::min(end_x, mark_left + mark_size);
+            draw.focus_levels = ui::focus_grid_levels;
             if (right > left) {
                 if (level < 2) draw.rect({left, grid.y, right - left, grid.height}, mark_colors[level]);
                 else for (int degree = first_degree; degree >= lowest; --degree) {
@@ -150,7 +214,14 @@ namespace minidaw {
                     if (bottom > y) draw.rect({left, y, right - left, bottom - y}, mark_colors[level]);
                 }
             }
-            if (bar && step / bar_steps % label_stride == 0 && x + 6 >= grid.x && x + 6 < end_x) draw.text(std::to_wstring(step / bar_steps + 1), ui::label_size, x + 6, ui::ruler_y + 2, ui::muted, std::min(45.f, end_x - x - 6));
+            draw.focus_levels = {1, 1};
+            if (bar && step / bar_steps % label_stride == 0 && x + 50 > grid.x && x < end_x) {
+                const auto found = bar_focus.find(step / bar_steps);
+                const float emphasis = found == bar_focus.end() ? 0.f : focus_strength * found->second;
+                const float brightness = 1 - ui::focus_label_reduction * (focus_strength - emphasis);
+                const ui::Color color{std::lerp(ui::muted.r, ui::accent.r, emphasis) * brightness, std::lerp(ui::muted.g, ui::accent.g, emphasis) * brightness, std::lerp(ui::muted.b, ui::accent.b, emphasis) * brightness, 1};
+                draw.text(std::to_wstring(step / bar_steps + 1), ui::label_size, x + 6, ui::ruler_y + 2, color, 44, false, true, Rect{grid.x, ui::ruler_y, grid.width, grid.y - ui::ruler_y});
+            }
         }
         constexpr std::array solfege{L"Do", L"Re", L"Mi", L"Fa", L"Sol", L"La", L"Ti"};
         constexpr std::array numerals{L"I", L"II", L"III", L"IV", L"V", L"VI", L"VII"};
@@ -171,6 +242,7 @@ namespace minidaw {
             const bool selected = selection.contains(note.id);
             const bool bass = note.voice == Voice::bass;
             const bool pointing = (gesture == Gesture::none || gesture == Gesture::velocity) && hovered == note.id;
+            draw.focus_levels = selected || pointing ? std::array{1.f, 1.f} : ui::focus_note_levels;
             const ui::Color fill = selected ? (bass ? ui::note_active_colors[1] : ui::note_active_colors[0]) : pointing ? (bass ? ui::note_hover_colors[1] : ui::note_hover_colors[0]) : (bass ? ui::note_colors[1] : ui::note_colors[0]);
             const ui::Color border = selected ? ui::note_active_border : bass ? ui::note_border_colors[1] : ui::note_border_colors[0];
             const ui::Color text = ui::note_text_color;
@@ -189,16 +261,22 @@ namespace minidaw {
                 draw.rect({cap_left, y + border_width, cap_right - cap_left, bottom - y - 2 * border_width}, {0, 0, 0, dragging_edge ? .48f : pointing || active_edge ? .4f : .32f}, cap_radius);
             }
             const float content_left = left + 9;
-            const float content_right = finish <= end_x ? cap_left - 5 : right - 9;
+            const float content_right = std::min(finish - edge_width - 5, end_x - 9);
+            const float full_content_width = finish - edge_width - 5 - start - 9;
             const float velocity_y = top + (rh - 11 - velocity_text_height) / 2;
-            const bool show_velocity = content_right - content_left >= velocity_width && velocity_y >= y + 2 && velocity_y + velocity_text_height <= bottom - 7;
-            if (show_velocity) draw.text(std::to_wstring(note.velocity), velocity_font_size, content_right - velocity_width, velocity_y, text, velocity_width, true, true);
+            const bool show_velocity = full_content_width >= velocity_width && velocity_y >= top + 2 && velocity_y + velocity_text_height <= top + rh - 13;
+            const float clip_y = std::max(grid.y, top + border_width);
+            const float clip_bottom = std::min(end_y, top + rh - 13);
+            const float velocity_left = std::max(content_left, content_right - velocity_width);
+            if (show_velocity && content_right > velocity_left && clip_bottom > clip_y) draw.text(std::to_wstring(note.velocity), velocity_font_size, content_right - velocity_width, velocity_y, text, velocity_width, true, true, Rect{velocity_left, clip_y, content_right - velocity_left, clip_bottom - clip_y});
             const float text_y = top + (rh - 11 - note_text_height) / 2;
-            const float text_width = content_right - content_left - (show_velocity ? velocity_width + 8 : 0);
-            if (text_width > 0 && text_y >= y + 2 && text_y + note_text_height <= bottom - 7) {
+            const float text_width = full_content_width - (show_velocity ? velocity_width + 8 : 0);
+            const float text_right = content_right - (show_velocity ? velocity_width + 8 : 0);
+            if (text_width > 0 && text_right > content_left && clip_bottom > clip_y) {
                 const int solfege_degree = (degree % 7 + (sequence.minor ? 5 : 0)) % 7;
-                const float advance = draw.text(solfege[solfege_degree], note_font_size, content_left, text_y, text, text_width, false, true);
-                if (advance < text_width) draw.text(std::format(L" ({})", numerals[degree % 7]), note_font_size, content_left + advance, text_y, {text.r, text.g, text.b, .72f}, text_width - advance, false, true);
+                const Rect text_clip{content_left, clip_y, text_right - content_left, clip_bottom - clip_y};
+                const float advance = draw.text(solfege[solfege_degree], note_font_size, content_left, text_y, text, text_width, false, true, text_clip);
+                if (advance < text_width) draw.text(std::format(L" ({})", numerals[degree % 7]), note_font_size, content_left + advance, text_y, {text.r, text.g, text.b, .72f}, text_width - advance, false, true, text_clip);
             }
             if (bottom - y > 10 && right - left > 12) {
                 const float velocity_track_width = right - left - 12;
@@ -206,6 +284,7 @@ namespace minidaw {
                 draw.rect({left + 6, bottom - 6, std::min(velocity_track_width, std::max(1.f, velocity_track_width * note.velocity / 127.f)), 3}, {text.r, text.g, text.b, .9f}, 1);
             }
         }
+        draw.focus_levels = {1, 1};
         if (gesture == Gesture::marquee && moved) {
             const float ax = std::clamp(x_at(anchor_beat), grid.x, end_x);
             const float ay = std::clamp(grid.y + static_cast<float>(document.top_degree - anchor_row) * rh, grid.y, end_y);
@@ -223,6 +302,7 @@ namespace minidaw {
         draw.text(L"SUSTAIN", ui::unit_size, 30, pedal_lane.y + 10, pedal_color, 97);
         const float pedal_high = pedal_lane.y + 9, pedal_low = pedal_lane.y + 24;
         const double last_beat = document.first_beat + grid.width / px;
+        draw.focus_levels = ui::focus_note_levels;
         if (bar_length * px < 2) draw.rect({grid.x, pedal_high, grid.width, 1}, pedal_color);
         else for (double bar = sustain_range(document.first_beat, bar_length).first; bar < last_beat; bar += bar_length) {
             const auto [down, up] = sustain_range(bar, bar_length);
@@ -233,6 +313,16 @@ namespace minidaw {
             if (low_right > low_left) draw.rect({low_left, pedal_low, low_right - low_left, 1}, pedal_color);
             if (start >= grid.x && start < end_x) draw.rect({start, pedal_high, 1, pedal_low - pedal_high}, pedal_color);
             if (release >= grid.x && release < end_x) draw.rect({release, pedal_high, 1, pedal_low - pedal_high}, pedal_color);
+        }
+        draw.focus_levels = {1, 1};
+        if (focus_strength > 0) {
+            const float underline_height = std::round(ui::focus_underline_width * draw.scale) / draw.scale;
+            for (const auto& [bar, weight] : bar_focus) {
+                if (weight == 0) continue;
+                const float left = std::clamp(x_at(bar * bar_length), grid.x, end_x);
+                const float right = std::clamp(x_at((bar + 1) * bar_length), grid.x, end_x);
+                if (right > left) draw.rect({left, grid.y - underline_height, right - left, underline_height}, {ui::accent.r, ui::accent.g, ui::accent.b, focus_strength * weight});
+            }
         }
         const float playhead_width = std::round(ui::playhead_width * draw.scale) / draw.scale;
         const float playhead = std::round((x_at(position) - playhead_width * .5f) * draw.scale) / draw.scale;
@@ -246,7 +336,6 @@ namespace minidaw {
         else if (!engine->ready) status = L"Loading Kontakt 8…";
         draw.text(status, ui::label_size, ui::label_x, height - 28, ui::muted, width - 680);
         if (engine->ready) {
-            const auto now = std::chrono::steady_clock::now();
             const float elapsed = std::chrono::duration<float>(now - meter_updated).count();
             for (std::size_t channel = 0; channel < meter_db.size(); ++channel) {
                 const float amplitude = engine->output_peaks[channel].exchange(0.f, std::memory_order_relaxed);
@@ -315,11 +404,11 @@ namespace minidaw {
             }
         }
         if (help) {
-            const float left = width / 2 - 310, top = height / 2 - 297.5f;
-            draw.rect({left, top, 620, 595}, ui::rule_color, 10);
-            draw.rect({left + 1, top + 1, 618, 593}, ui::surface_color, 9);
+            const float left = width / 2 - 310, top = height / 2 - 286;
+            draw.rect({left, top, 620, 572}, ui::rule_color, 10);
+            draw.rect({left + 1, top + 1, 618, 570}, ui::surface_color, 9);
             draw.text(L"Editing gestures", 21, left + 26, top + 20, ui::foreground, 550);
-            const std::array<std::pair<const wchar_t*, const wchar_t*>, 23> lines{{
+            const std::array<std::pair<const wchar_t*, const wchar_t*>, 22> lines{{
                 {L"Blank drag / Shift + drag", L"Select / add to selection"},
                 {L"Ctrl + click / drag", L"Write note / set its length"},
                 {L"Note body / right edge", L"Move / resize selected notes"},
@@ -331,7 +420,6 @@ namespace minidaw {
                 {L"Middle click / drag", L"Seek / pan"},
                 {L"Middle-click pitch labels", L"Return to start"},
                 {L"Ctrl + 0 / Ctrl + Shift + 0", L"Fit all / fit selection"},
-                {L"Ruler / F", L"Seek / resume centered follow"},
                 {L"P", L"Automatic sustain on / off"},
                 {L"Space / Enter / Home", L"Play-pause / stop-return / start"},
                 {L"R", L"Start from locator / paused position"},
@@ -350,7 +438,7 @@ namespace minidaw {
             }
         }
         draw.draw();
-        frames.continuous = engine->playing.load() || engine->preview_held.load() || gesture != Gesture::none || std::ranges::max(meter_db) > ui::meter_floor || std::ranges::max(held_peak_db) >= ui::meter_floor || std::chrono::steady_clock::now() < toast_until;
+        frames.continuous = focus_animating || engine->playing.load() || engine->preview_held.load() || gesture != Gesture::none || std::ranges::max(meter_db) > ui::meter_floor || std::ranges::max(held_peak_db) >= ui::meter_floor || std::chrono::steady_clock::now() < toast_until;
     }
 
     void Window::inherit_selection() {
@@ -380,7 +468,6 @@ namespace minidaw {
     void Window::locate(double beat) {
         playback_start = std::max(0.0, std::round(beat / snap) * snap);
         engine->seek = playback_start;
-        follow = true;
         follow_from = document.first_beat;
         follow_resume_at = std::chrono::steady_clock::now();
     }
@@ -405,15 +492,15 @@ namespace minidaw {
                 engine->publish(document.sequence);
             }
         }
-        if (!commit && operation != Gesture::pan && operation != Gesture::seek && operation != Gesture::audition) selection = before_selection;
+        if (!commit && operation != Gesture::pan && operation != Gesture::audition) selection = before_selection;
         if (!commit && operation == Gesture::pan) {
             document.first_beat = original_first;
             document.top_degree = original_top;
         }
         if (commit && operation == Gesture::pan && !moved) locate(anchor_beat);
-        if (follow && engine->playing) {
+        if (engine->playing) {
             follow_from = document.first_beat;
-            follow_resume_at = std::chrono::steady_clock::now() + (operation == Gesture::seek ? std::chrono::milliseconds{0} : ui::follow_delay);
+            follow_resume_at = std::chrono::steady_clock::now() + (commit && operation == Gesture::pan && !moved ? std::chrono::milliseconds{0} : ui::follow_delay);
         } else follow_resume_at.reset();
         if (commit && dragged) {
             const auto& note = *std::ranges::find(document.sequence.notes, dragged, &Note::id);
@@ -609,10 +696,7 @@ namespace minidaw {
             moved = false;
             additive = shift;
             dragged = id;
-            if (target == Gesture::seek) {
-                gesture = Gesture::seek;
-                locate(beat);
-            } else if (target == Gesture::audition) {
+            if (target == Gesture::audition) {
                 gesture = Gesture::audition;
                 if (!engine->playing) {
                     audition_pitch = document.pitch(degree);
@@ -709,8 +793,7 @@ namespace minidaw {
                     constrain_pitch_view();
                 }
             }
-        } else if (gesture == Gesture::seek) locate(beat);
-        else if (gesture == Gesture::audition) {
+        } else if (gesture == Gesture::audition) {
             if (!engine->playing && grid.y <= y && y < grid.y + grid.height && audition_pitch != document.pitch(degree)) {
                 audition_pitch = document.pitch(degree);
                 engine->preview = audition_pitch;
@@ -850,8 +933,7 @@ namespace minidaw {
             selection.clear();
         } else if (action == paste_notes) {
             selection.clear();
-            const double pending = engine->seek;
-            const double start = std::round((pending >= 0 ? pending : engine->position.load()) / snap) * snap;
+            const double start = std::round(engine->position() / snap) * snap;
             for (std::size_t i = 0; i < clipboard.size(); ++i) {
                 auto note = clipboard[i];
                 note.id = sequence.next_id++;
@@ -915,7 +997,6 @@ namespace minidaw {
         if (key == VK_SPACE && engine->ready) {
             if (!engine->playing) {
                 if (play_from_locator) engine->seek = playback_start;
-                follow = true;
                 follow_from = document.first_beat;
                 follow_resume_at = std::chrono::steady_clock::now();
             }
@@ -934,12 +1015,6 @@ namespace minidaw {
             locate(0);
             document.first_beat = 0;
             follow_from = 0;
-            return;
-        }
-        if (key == 'F' && !control) {
-            follow = true;
-            follow_from = document.first_beat;
-            follow_resume_at = std::chrono::steady_clock::now();
             return;
         }
         if (key == 'P' && !control) {
@@ -981,7 +1056,8 @@ namespace minidaw {
             document.row_height = std::min<double>(grid.height / (high - low + 3), 96.0);
             document.top_degree = high + 1.0;
             constrain_pitch_view();
-            follow = false;
+            follow_from = document.first_beat;
+            follow_resume_at = std::chrono::steady_clock::now() + ui::follow_delay;
             return;
         }
         if (control && key == 'N') {
@@ -998,7 +1074,13 @@ namespace minidaw {
             engine->preview = -2;
             engine->seek = 0;
             playback_start = 0;
-            follow = true;
+            bar_focus.clear();
+            focus_from.clear();
+            focus_target.reset();
+            focus_strength = 0;
+            focus_strength_from = 0;
+            focus_strength_target = 0;
+            focus_animating = false;
             follow_from = document.first_beat;
             follow_resume_at = std::chrono::steady_clock::now();
             changed();
@@ -1172,38 +1254,18 @@ namespace minidaw {
             if (message == WM_APP + 6) {
                 const auto gesture = self->gesture;
                 const bool note_drag = gesture == Gesture::move || gesture == Gesture::copy || gesture == Gesture::create || gesture == Gesture::resize_end || gesture == Gesture::marquee;
-                const bool time_drag = note_drag || gesture == Gesture::seek;
-                if (self->moved && time_drag && GetCapture() == window) {
+                if (self->moved && note_drag && GetCapture() == window) {
                     auto& document = self->document;
                     const auto& grid = self->grid;
                     const float x = self->pointer_x, y = self->pointer_y;
                     const double horizontal = x < grid.x + 24 ? std::max(-40.f, x - grid.x - 24) : x > grid.x + grid.width - 24 ? std::min(40.f, x - grid.x - grid.width + 24) : 0;
-                    const double vertical = !note_drag ? 0 : y < grid.y + 24 ? std::max(-40.f, y - grid.y - 24) : y > grid.y + grid.height - 24 ? std::min(40.f, y - grid.y - grid.height + 24) : 0;
+                    const double vertical = y < grid.y + 24 ? std::max(-40.f, y - grid.y - 24) : y > grid.y + grid.height - 24 ? std::min(40.f, y - grid.y - grid.height + 24) : 0;
                     if (horizontal || vertical) {
                         document.first_beat = std::max(0.0, document.first_beat + horizontal * 12.5 * self->frames.elapsed / document.pixels_per_beat);
                         document.top_degree -= vertical * 12.5 * self->frames.elapsed / document.row_height;
                         self->constrain_pitch_view();
                         const WPARAM flags = (GetKeyState(VK_SHIFT) < 0 ? MK_SHIFT : 0) | (GetKeyState(VK_CONTROL) < 0 ? MK_CONTROL : 0);
                         self->pointer(WM_MOUSEMOVE, x, y, flags);
-                    }
-                }
-                if (self->engine->playing && self->follow) {
-                    const auto now = std::chrono::steady_clock::now();
-                    if ((self->gesture != Gesture::none && self->gesture != Gesture::gain) || self->input || self->help || self->popup != Popup::none) {
-                        self->follow_from = self->document.first_beat;
-                        self->follow_resume_at = now + ui::follow_delay;
-                    } else {
-                        const double pending = self->engine->seek.load();
-                        const double position = pending >= 0 ? pending : self->engine->position.load();
-                        const double target = std::max(0.0, position - self->grid.width / (2 * self->document.pixels_per_beat));
-                        if (self->follow_resume_at) {
-                            const double elapsed = std::chrono::duration<double>(now - *self->follow_resume_at).count();
-                            const double phase = std::clamp(elapsed / std::chrono::duration<double>(ui::follow_duration).count(), 0., 1.);
-                            const double blend = phase * phase * phase * (10 + phase * (6 * phase - 15));
-                            self->document.first_beat = std::lerp(self->follow_from, target, blend);
-                            if (phase == 1) self->follow_resume_at.reset();
-                        } else self->document.first_beat = target;
-                        std::tie(self->hover, self->hovered) = self->hit(self->pointer_x, self->pointer_y);
                     }
                 }
                 self->paint();
@@ -1311,9 +1373,7 @@ namespace minidaw {
     std::pair<Window::Gesture, std::uint64_t> Window::hit(float x, float y) const {
         if (help || popup != Popup::none) return {Gesture::none, 0};
         if (engine->ready && Rect{width - ui::master_right, height - 40, 90, 36}.contains(x, y)) return {Gesture::gain, 0};
-        if (pedal_lane.contains(x, y)) return {Gesture::seek, 0};
         const float end_x = grid.x + grid.width, end_y = grid.y + grid.height;
-        if (x >= grid.x && x < end_x && y >= 100 && y < grid.y) return {Gesture::seek, 0};
         if (x >= 28 && x < grid.x && y >= grid.y && y < end_y) {
             const int degree = static_cast<int>(std::ceil(document.top_degree - (y - grid.y) / document.row_height));
             const auto [lowest, highest] = degree_range();
@@ -1413,7 +1473,7 @@ namespace minidaw {
         }
         LPCWSTR shape = IDC_ARROW;
         if (target == Gesture::move) shape = IDC_SIZEALL;
-        if (target == Gesture::marquee || target == Gesture::seek) shape = IDC_CROSS;
+        if (target == Gesture::marquee) shape = IDC_CROSS;
         if (target == Gesture::resize_end) shape = IDC_SIZEWE;
         if (target == Gesture::gain) shape = IDC_SIZENS;
         if (target == Gesture::pan || target == Gesture::audition) shape = IDC_HAND;

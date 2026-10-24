@@ -6,10 +6,15 @@ struct Push {
     float4 screen;
     float4 color;
     float focus_strength;
+    float waveform_tint;
 };
 [[vk::push_constant]] Push push;
 [[vk::binding(1)]] StructuredBuffer<float> samples;
-[[vk::binding(3)]] StructuredBuffer<float2> focus_columns;
+struct FocusColumn {
+    float4 emphasis;
+    float4 tint;
+};
+[[vk::binding(3)]] StructuredBuffer<FocusColumn> focus_columns;
 
 struct Fragment {
     float4 position : SV_Position;
@@ -105,7 +110,13 @@ float4 fragment_main(Fragment fragment) : SV_Target {
     if (push.view.w != 0) alpha = saturate(min(fragment.edge.y - fragment.bounds.x, fragment.bounds.y - fragment.edge.y) + 0.5) * 0.86;
     float3 color = push.color.rgb;
     if (push.screen.z == 0 && push.focus_strength > 0) {
-        float2 emphasis = focus_columns[uint(fragment.position.x)];
+        float2 emphasis = focus_columns[uint(fragment.position.x)].emphasis.xy;
+        float4 tint = focus_columns[uint(fragment.position.x)].tint;
+        if (tint.a > 0) {
+            float3 base = select(color <= 0.04045, color / 12.92, pow((color + 0.055) / 1.055, 2.4));
+            float3 mixed = lerp(base, tint.rgb / tint.a, push.waveform_tint * tint.a);
+            color = select(mixed <= 0.0031308, mixed * 12.92, 1.055 * pow(mixed, 1.0 / 2.4) - 0.055);
+        }
         color *= 1 - 0.85 * (push.focus_strength - emphasis.x) + 0.20 * emphasis.y;
     }
     color = select(color <= 0.04045, color / 12.92, pow((color + 0.055) / 1.055, 2.4));

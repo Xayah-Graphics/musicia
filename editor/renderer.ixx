@@ -21,11 +21,17 @@ export namespace editor {
         }
     };
 
+    struct FocusColumn {
+        std::array<float, 4> emphasis{};
+        std::array<float, 4> tint{};
+    };
+
     struct Vertex {
         float x{}, y{}, u{}, v{};
         ui::Color color;
         float mode{}, radius{}, width{}, height{};
         std::array<float, 2> focus_levels{1, 1};
+        float focus_tint{};
     };
 
     struct Buffer {
@@ -46,8 +52,9 @@ export namespace editor {
         float scale{1};
         std::vector<Vertex> vertices;
         std::uint32_t wave_layer{};
-        std::vector<std::array<float, 2>> focus_columns;
+        std::vector<FocusColumn> focus_columns;
         std::array<float, 2> focus_levels{1, 1};
+        float focus_tint{};
         float focus_strength{};
         Rect wave_rect, overview_rect;
         double wave_first{}, wave_count{1};
@@ -61,7 +68,7 @@ export namespace editor {
         void upload(const musicia::AudioClip& clip);
         void reset_fonts();
         void rect(Rect area, ui::Color color, float radius = 0);
-        float text(std::wstring_view value, float size, float x, float y, ui::Color color, float width = 2000, bool centered = false, bool fit = false);
+        float text(std::wstring_view value, float size, float x, float y, ui::Color color, float width = 2000, bool centered = false, bool fit = false, std::optional<Rect> clip = std::nullopt);
         void draw();
 
     private:
@@ -108,6 +115,7 @@ export namespace editor {
         Microsoft::WRL::ComPtr<IDWriteTypography> typography;
         std::map<std::tuple<IDWriteFontFace*, std::uint16_t, float>, Glyph> glyphs;
         ui::Color text_color;
+        std::optional<Rect> text_clip;
 
         HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) override;
         ULONG STDMETHODCALLTYPE AddRef() override;

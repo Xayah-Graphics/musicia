@@ -69,16 +69,17 @@ export namespace ui {
             QueryPerformanceFrequency(&frequency);
         }
 
-        void update(double position, std::uint64_t timestamp, double speed) {
+        void update(double position, std::uint64_t timestamp, double speed, double end = std::numeric_limits<double>::infinity()) {
             version.fetch_add(1);
             anchor.store(position);
             time.store(timestamp);
             rate.store(speed);
+            limit.store(end);
             version.fetch_add(1);
         }
 
         double position(bool advancing) const {
-            double base{}, speed{};
+            double base{}, speed{}, end{};
             std::uint64_t timestamp{};
             for (;;) {
                 const auto before = version.load();
@@ -86,18 +87,19 @@ export namespace ui {
                 base = anchor.load();
                 timestamp = time.load();
                 speed = rate.load();
+                end = limit.load();
                 if (before == version.load()) break;
             }
             if (!advancing || speed == 0) return base;
             LARGE_INTEGER now{};
             QueryPerformanceCounter(&now);
             const double elapsed = static_cast<double>(now.QuadPart) / frequency.QuadPart - static_cast<double>(timestamp) / 10000000.;
-            return base + std::max(0., elapsed) * speed;
+            return std::min(end, base + std::max(0., elapsed) * speed);
         }
 
     private:
         LARGE_INTEGER frequency{};
         std::atomic<std::uint64_t> version{}, time{};
-        std::atomic<double> anchor{}, rate{};
+        std::atomic<double> anchor{}, rate{}, limit{std::numeric_limits<double>::infinity()};
     };
 }

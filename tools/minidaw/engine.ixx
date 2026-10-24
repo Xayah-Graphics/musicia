@@ -16,13 +16,14 @@ module;
 export module minidaw.engine;
 import std;
 import minidaw.document;
+import editor.timing;
 
 export namespace minidaw {
     inline constexpr float minimum_master_db{-60}, maximum_master_db{6};
 
     struct Engine final : Steinberg::Vst::HostApplication, Steinberg::Vst::IComponentHandler, Steinberg::IPlugFrame {
         std::atomic<bool> playing{}, failed{}, automatic_sustain{true};
-        std::atomic<double> position{}, seek{-1};
+        std::atomic<double> seek{-1};
         std::atomic<float> master_db{};
         std::array<std::atomic<float>, 2> output_peaks{};
         std::atomic<bool> overloaded{};
@@ -39,6 +40,7 @@ export namespace minidaw {
         ~Engine();
         void initialize();
         void publish(const Sequence& sequence);
+        double position() const;
         void start();
         void stop();
         void show_plugin();
@@ -66,6 +68,10 @@ export namespace minidaw {
         Steinberg::IPtr<Steinberg::IPlugView> view;
         Microsoft::WRL::ComPtr<IAudioClient3> client;
         Microsoft::WRL::ComPtr<IAudioRenderClient> render;
+        Microsoft::WRL::ComPtr<IAudioClock> device_clock;
+        std::uint64_t clock_frequency{};
+        ui::PlaybackClock clock;
+        std::atomic<double> locating{-1};
         HANDLE audio_event{}, stop_event{};
         unsigned channels{}, buffer_frames{};
         std::jthread worker;
