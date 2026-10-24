@@ -6,6 +6,7 @@ module;
 export module editor.window;
 
 import std;
+export import editor.timing;
 import musicia.audio;
 import editor.renderer;
 import editor.timeline;
@@ -16,6 +17,7 @@ import musicia.sheetsage2;
 export namespace editor {
     struct Window final : IDropTarget {
         HWND handle{};
+        ui::FrameClock frames;
         std::string fatal_error;
 
         Window();
@@ -40,12 +42,24 @@ export namespace editor {
         std::filesystem::path loading_path;
         std::filesystem::path pending_path;
         std::wstring error;
-        bool loading{}, loaded{}, expanded{}, drop_active{}, accepts_drop{}, restore_playback{};
+        bool loading{}, loaded{}, expanded{}, drop_active{}, accepts_drop{};
         float width{448}, height{274};
-        bool follow{true}, hovering{}, drag_moved{};
-        float hover_x{}, hover_y{}, drag_x{}, drag_y{}, drag_height{}, wave_height{144};
+        bool initial_view{true}, hovering{}, drag_moved{};
+        std::optional<std::chrono::steady_clock::time_point> follow_resume_at;
+        double follow_from{};
+        std::vector<float> bar_focus, focus_from;
+        std::optional<std::size_t> focus_target;
+        float focus_strength{}, focus_strength_from{}, focus_strength_target{};
+        bool focus_animating{};
+        std::chrono::steady_clock::time_point focus_started{}, focus_fade_started{};
+        float hover_x{}, hover_y{}, drag_x{}, drag_y{}, drag_height{}, wave_height{112};
         double drag_frame{}, drag_first{}, drag_count{};
-        enum struct Drag { none, seek, pan, height, overview, view, left, right };
+        float original_gain{};
+        std::array<float, 2> meter_db{ui::meter_floor, ui::meter_floor};
+        std::array<float, 2> held_peak_db{-std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
+        std::array<std::chrono::steady_clock::time_point, 2> peak_hold_until{};
+        std::chrono::steady_clock::time_point meter_updated{std::chrono::steady_clock::now()};
+        enum struct Drag { none, pan, pan_overview, height, view, left, right, gain };
         Drag drag{Drag::none};
         Rect content, waveform, overview, wave_divider, melody;
         std::array<Rect, 3> lanes;
@@ -60,7 +74,8 @@ export namespace editor {
             double start{}, end{};
             std::array<float, 2> low{std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity()};
             std::array<float, 2> high{-std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
-            std::array<std::wstring, 14> labels;
+            std::array<int, 14> pitch_offsets{};
+            std::array<std::wstring, 14> labels, solfege_labels;
         };
         std::vector<MelodyPassage> melody_passages;
         struct MelodyNote {
@@ -74,8 +89,12 @@ export namespace editor {
 
         void layout();
         void rebuild_analysis_view();
+        Rect note_rect(const MelodyNote& segment) const;
+        const MelodyNote* note_at(float x, float y) const;
+        void locate(double frame);
         void refresh();
         void render();
+        void cursor();
         void move_drag(float x, float y);
         void finish_drag(bool commit = false);
         LRESULT message(UINT message, WPARAM wparam, LPARAM lparam);

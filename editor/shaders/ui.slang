@@ -5,23 +5,26 @@ struct Push {
     uint4 track;
     float4 screen;
     float4 color;
-    float playhead;
+    float focus_strength;
 };
 [[vk::push_constant]] Push push;
 [[vk::binding(0)]] Texture2D<float> glyph_atlas;
 [[vk::binding(2)]] SamplerState glyph_sampler;
+[[vk::binding(3)]] StructuredBuffer<float2> focus_columns;
 
 struct Vertex {
     float2 position : POSITION;
     float2 uv : TEXCOORD0;
     float4 color : COLOR0;
     float4 shape : TEXCOORD1;
+    float2 focus_levels : TEXCOORD2;
 };
 struct Fragment {
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
     float4 color : COLOR0;
     nointerpolation float4 shape : TEXCOORD1;
+    nointerpolation float2 focus_levels : TEXCOORD2;
 };
 
 [shader("vertex")]
@@ -31,6 +34,7 @@ Fragment vertex_main(Vertex vertex) {
     result.uv = vertex.uv;
     result.color = vertex.color;
     result.shape = vertex.shape;
+    result.focus_levels = vertex.focus_levels;
     return result;
 }
 
@@ -47,5 +51,11 @@ float4 fragment_main(Fragment fragment) : SV_Target {
         float distance = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - fragment.shape.y;
         alpha *= saturate(0.5 - distance);
     }
-    return float4(linear_color(fragment.color.rgb) * alpha, alpha);
+    float brightness = 1;
+    if (push.focus_strength > 0 && fragment.focus_levels.x < 1) {
+        float2 emphasis = focus_columns[uint(fragment.position.x)];
+        brightness -= (1 - fragment.focus_levels.x) * (push.focus_strength - emphasis.x);
+        brightness += (fragment.focus_levels.y - fragment.focus_levels.x) * emphasis.y;
+    }
+    return float4(linear_color(fragment.color.rgb * brightness) * alpha, alpha);
 }

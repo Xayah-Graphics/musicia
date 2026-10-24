@@ -2,6 +2,7 @@ module;
 #include <windows.h>
 export module minidaw.window;
 import std;
+export import editor.timing;
 import minidaw.renderer;
 import minidaw.document;
 import minidaw.engine;
@@ -9,6 +10,7 @@ import minidaw.engine;
 export namespace minidaw {
     struct Window {
         HWND handle{};
+        ui::FrameClock frames;
         std::unique_ptr<Renderer> renderer;
         Document document;
         std::unique_ptr<Engine> engine;
@@ -45,7 +47,7 @@ export namespace minidaw {
         int anchor_degree{}, audition_pitch{-1};
         float anchor_x{}, anchor_y{}, pointer_x{}, pointer_y{};
         float original_gain{};
-        std::array<float, 2> meter_db{-60, -60};
+        std::array<float, 2> meter_db{ui::meter_floor, ui::meter_floor};
         std::array<float, 2> held_peak_db{-std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
         std::array<std::chrono::steady_clock::time_point, 2> peak_hold_until{};
         std::chrono::steady_clock::time_point meter_updated{std::chrono::steady_clock::now()};
@@ -67,6 +69,7 @@ export namespace minidaw {
         UINT pencil_dpi{}, copy_dpi{};
         std::wstring input_original, toast;
         std::chrono::steady_clock::time_point toast_until{};
-        std::chrono::steady_clock::time_point follow_after{};
+        std::optional<std::chrono::steady_clock::time_point> follow_resume_at;
+        double follow_from{};
     };
 }

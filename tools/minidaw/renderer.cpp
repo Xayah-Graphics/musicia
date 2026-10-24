@@ -112,6 +112,8 @@ namespace minidaw {
         finished          = vk::raii::Fence(device, {.flags = vk::FenceCreateFlagBits::eSignaled});
         const auto result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory2), reinterpret_cast<IUnknown**>(fonts.GetAddressOf()));
         if (FAILED(result)) throw std::runtime_error("Unable to initialize DirectWrite.");
+        fonts->CreateTypography(&typography);
+        typography->AddFontFeature({DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES, 1});
         resize();
     }
 
@@ -128,7 +130,7 @@ namespace minidaw {
         presented.clear();
         images.clear();
         swapchain.clear();
-        auto count = std::max(capabilities.minImageCount, 3u);
+        auto count = std::max(capabilities.minImageCount, 2u);
         if (capabilities.maxImageCount) count = std::min(count, capabilities.maxImageCount);
         swapchain = vk::raii::SwapchainKHR(device, {.surface = *surface, .minImageCount = count, .imageFormat = vk::Format::eB8G8R8A8Srgb, .imageColorSpace = vk::ColorSpaceKHR::eSrgbNonlinear, .imageExtent = extent, .imageArrayLayers = 1, .imageUsage = vk::ImageUsageFlagBits::eColorAttachment, .imageSharingMode = vk::SharingMode::eExclusive, .preTransform = capabilities.currentTransform, .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque, .presentMode = vk::PresentModeKHR::eFifo, .clipped = true});
         images    = swapchain.getImages();
@@ -147,7 +149,7 @@ namespace minidaw {
         atlas_dirty = true;
     }
 
-    void Renderer::rect(Rect area, Color color, float radius) {
+    void Renderer::rect(Rect area, ui::Color color, float radius) {
         area.x *= scale;
         area.y *= scale;
         area.width *= scale;
@@ -155,9 +157,9 @@ namespace minidaw {
         for (const auto& corner : std::array{std::array{0.f, 0.f}, std::array{1.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 1.f}}) vertices.push_back({area.x + area.width * corner[0], area.y + area.height * corner[1], area.width * corner[0], area.height * corner[1], color, radius > 0 ? 2.f : 0.f, radius * scale, area.width, area.height});
     }
 
-    float Renderer::text(std::wstring_view value, float size, float x, float y, Color color, float width, bool centered, bool fit) {
+    float Renderer::text(std::wstring_view value, float size, float x, float y, ui::Color color, float width, bool centered, bool fit) {
         Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
-        auto result = fonts->CreateTextFormat(L"Segoe UI Variable", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size * scale, L"en-US", &format);
+        auto result = fonts->CreateTextFormat(ui::font_family, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size * scale, L"en-US", &format);
         if (FAILED(result)) throw std::runtime_error("Unable to create text format.");
         format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         if (centered) format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -170,6 +172,7 @@ namespace minidaw {
         Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
         result = fonts->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format.Get(), width * scale, size * scale * 2, &layout);
         if (FAILED(result)) throw std::runtime_error("Unable to lay out text.");
+        layout->SetTypography(typography.Get(), {0, static_cast<UINT32>(value.size())});
         DWRITE_TEXT_METRICS metrics{};
         layout->GetMetrics(&metrics);
         const float advance = metrics.widthIncludingTrailingWhitespace / scale;
@@ -216,7 +219,7 @@ namespace minidaw {
         vk::ImageMemoryBarrier2 present_barrier{.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput, .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput, .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite, .oldLayout = vk::ImageLayout::eUndefined, .newLayout = vk::ImageLayout::eColorAttachmentOptimal, .srcQueueFamilyIndex = vk::QueueFamilyIgnored, .dstQueueFamilyIndex = vk::QueueFamilyIgnored, .image = images[index], .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
         command.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &present_barrier});
         const auto linear = [](float value) { return value <= .04045f ? value / 12.92f : std::pow((value + .055f) / 1.055f, 2.4f); };
-        const vk::RenderingAttachmentInfo attachment{.imageView = *views[index], .imageLayout = vk::ImageLayout::eColorAttachmentOptimal, .loadOp = vk::AttachmentLoadOp::eClear, .storeOp = vk::AttachmentStoreOp::eStore, .clearValue = vk::ClearValue(vk::ClearColorValue(std::array{linear(background.r), linear(background.g), linear(background.b), background.a}))};
+        const vk::RenderingAttachmentInfo attachment{.imageView = *views[index], .imageLayout = vk::ImageLayout::eColorAttachmentOptimal, .loadOp = vk::AttachmentLoadOp::eClear, .storeOp = vk::AttachmentStoreOp::eStore, .clearValue = vk::ClearValue(vk::ClearColorValue(std::array{linear(ui::background.r), linear(ui::background.g), linear(ui::background.b), ui::background.a}))};
         command.beginRendering({.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &attachment});
         command.setViewport(0, vk::Viewport{0, 0, static_cast<float>(extent.width), static_cast<float>(extent.height), 0, 1});
         command.setScissor(0, vk::Rect2D{{0, 0}, extent});

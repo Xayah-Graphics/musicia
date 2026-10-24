@@ -5,10 +5,11 @@ struct Push {
     uint4 track;
     float4 screen;
     float4 color;
-    float playhead;
+    float focus_strength;
 };
 [[vk::push_constant]] Push push;
 [[vk::binding(1)]] StructuredBuffer<float> samples;
+[[vk::binding(3)]] StructuredBuffer<float2> focus_columns;
 
 struct Fragment {
     float4 position : SV_Position;
@@ -103,7 +104,10 @@ float4 fragment_main(Fragment fragment) : SV_Target {
     float alpha = body + peak * (1 - body);
     if (push.view.w != 0) alpha = saturate(min(fragment.edge.y - fragment.bounds.x, fragment.bounds.y - fragment.edge.y) + 0.5) * 0.86;
     float3 color = push.color.rgb;
-    if (push.screen.z == 0 && fragment.position.x > push.playhead) color *= 0.72;
+    if (push.screen.z == 0 && push.focus_strength > 0) {
+        float2 emphasis = focus_columns[uint(fragment.position.x)];
+        color *= 1 - 0.85 * (push.focus_strength - emphasis.x) + 0.20 * emphasis.y;
+    }
     color = select(color <= 0.04045, color / 12.92, pow((color + 0.055) / 1.055, 2.4));
     return float4(color * alpha, alpha);
 }

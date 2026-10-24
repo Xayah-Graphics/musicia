@@ -7,30 +7,12 @@ module;
 export module editor.renderer;
 
 import std;
+export import editor.style;
 import vulkan;
 import musicia.audio;
 import editor.waveform;
 
 export namespace editor {
-    struct Color {
-        float r{}, g{}, b{}, a{1};
-    };
-
-    inline constexpr Color background{0, 0, 0, 1};
-    inline constexpr Color foreground{246 / 255.f, 247 / 255.f, 249 / 255.f, 1};
-    inline constexpr Color muted{160 / 255.f, 166 / 255.f, 175 / 255.f, 1};
-    inline constexpr Color waveform_color{236 / 255.f, 241 / 255.f, 245 / 255.f, 1};
-    inline constexpr Color note_color{211 / 255.f, 223 / 255.f, 231 / 255.f, 1};
-    inline constexpr Color accent{156 / 255.f, 220 / 255.f, 1, 1};
-    inline constexpr Color surface_color{11 / 255.f, 14 / 255.f, 17 / 255.f, 1};
-    inline constexpr Color active_surface{17 / 255.f, 24 / 255.f, 28 / 255.f, 1};
-    inline constexpr Color hover_surface{28 / 255.f, 40 / 255.f, 46 / 255.f, 1};
-    inline constexpr Color rule_color{37 / 255.f, 43 / 255.f, 48 / 255.f, 1};
-    inline constexpr Color bar_grid{52 / 255.f, 53 / 255.f, 54 / 255.f, 1};
-    inline constexpr Color beat_grid{32 / 255.f, 32 / 255.f, 32 / 255.f, 1};
-    inline constexpr Color eighth_grid{18 / 255.f, 18 / 255.f, 18 / 255.f, 1};
-    inline constexpr Color sixteenth_grid{10 / 255.f, 10 / 255.f, 10 / 255.f, 1};
-
     struct Rect {
         float x{}, y{}, width{}, height{};
 
@@ -41,8 +23,9 @@ export namespace editor {
 
     struct Vertex {
         float x{}, y{}, u{}, v{};
-        Color color;
+        ui::Color color;
         float mode{}, radius{}, width{}, height{};
+        std::array<float, 2> focus_levels{1, 1};
     };
 
     struct Buffer {
@@ -63,8 +46,11 @@ export namespace editor {
         float scale{1};
         std::vector<Vertex> vertices;
         std::uint32_t wave_layer{};
+        std::vector<std::array<float, 2>> focus_columns;
+        std::array<float, 2> focus_levels{1, 1};
+        float focus_strength{};
         Rect wave_rect, overview_rect;
-        double wave_first{}, wave_count{1}, wave_position{};
+        double wave_first{}, wave_count{1};
         bool show_wave{};
 
         explicit Renderer(HWND window);
@@ -74,8 +60,8 @@ export namespace editor {
         void resize();
         void upload(const musicia::AudioClip& clip);
         void reset_fonts();
-        void rect(Rect area, Color color, float radius = 0);
-        void text(std::wstring_view value, float size, float x, float y, Color color, float width = 2000, bool centered = false, bool fit = false);
+        void rect(Rect area, ui::Color color, float radius = 0);
+        float text(std::wstring_view value, float size, float x, float y, ui::Color color, float width = 2000, bool centered = false, bool fit = false);
         void draw();
 
     private:
@@ -93,6 +79,9 @@ export namespace editor {
         vk::raii::Sampler sampler{nullptr};
         Buffer atlas_staging;
         Buffer vertex_buffer;
+        std::size_t vertex_capacity{4 * 1024 * 1024};
+        Buffer focus_buffer;
+        std::size_t focus_capacity{32 * 1024};
         Buffer wave_buffer;
         vk::raii::DescriptorSetLayout descriptor_layout{nullptr};
         vk::raii::DescriptorPool descriptor_pool{nullptr};
@@ -116,8 +105,9 @@ export namespace editor {
         std::vector<std::uint8_t> atlas_pixels;
         int atlas_x{1}, atlas_y{1}, atlas_row{};
         Microsoft::WRL::ComPtr<IDWriteFactory2> fonts;
+        Microsoft::WRL::ComPtr<IDWriteTypography> typography;
         std::map<std::tuple<IDWriteFontFace*, std::uint16_t, float>, Glyph> glyphs;
-        Color text_color;
+        ui::Color text_color;
 
         HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) override;
         ULONG STDMETHODCALLTYPE AddRef() override;

@@ -16,21 +16,28 @@ namespace minidaw {
     Window::Window() {
         const WNDCLASSW type{.style = CS_DBLCLKS, .lpfnWndProc = procedure, .hInstance = GetModuleHandleW(nullptr), .hCursor = LoadCursorW(nullptr, IDC_ARROW), .lpszClassName = L"MiniDAW.Editor"};
         RegisterClassW(&type);
+        POINT pointer{};
+        GetCursorPos(&pointer);
+        MONITORINFO monitor{sizeof(MONITORINFO)};
+        GetMonitorInfoW(MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST), &monitor);
         const auto dpi    = GetDpiForSystem();
         const float scale = dpi / 96.f;
-        RECT work{};
-        SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+        const RECT work = monitor.rcWork;
         const int w     = std::min(static_cast<int>(1600 * scale), static_cast<int>(work.right - work.left - 80));
         const int h     = std::min(static_cast<int>(980 * scale), static_cast<int>(work.bottom - work.top - 80));
         handle          = CreateWindowExW(0, type.lpszClassName, L"MiniDAW", WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN, work.left + (work.right - work.left - w) / 2, work.top + (work.bottom - work.top - h) / 2, w, h, nullptr, nullptr, type.hInstance, this);
         const BOOL dark = TRUE;
         DwmSetWindowAttribute(handle, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+        constexpr DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_ROUND;
+        DwmSetWindowAttribute(handle, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
+        constexpr COLORREF border = RGB(43, 43, 43);
+        DwmSetWindowAttribute(handle, DWMWA_BORDER_COLOR, &border, sizeof(border));
         renderer        = std::make_unique<Renderer>(handle);
-        renderer->scale = scale;
+        renderer->scale = GetDpiForWindow(handle) / 96.f;
         RECT client{};
         GetClientRect(handle, &client);
-        width  = client.right / scale;
-        height = client.bottom / scale;
+        width  = client.right / renderer->scale;
+        height = client.bottom / renderer->scale;
         PWSTR path{};
         SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &path);
         const auto directory = std::filesystem::path(path) / "MiniDAW";
@@ -40,8 +47,8 @@ namespace minidaw {
         engine->publish(document.sequence);
         ShowWindow(handle, SW_MAXIMIZE);
         document.pixels_per_beat = grid.width / (4.0 * document.sequence.beats * 4 / document.sequence.beat_unit);
-        SetTimer(handle, 1, 16, nullptr);
-        paint();
+        SetTimer(handle, 2, 50, nullptr);
+        frames.dirty = true;
         PostMessageW(handle, WM_APP + 1, 0, 0);
     }
     Window::~Window() {
@@ -60,23 +67,31 @@ namespace minidaw {
         const auto& sequence = document.sequence;
         const double bar_length = sequence.beats * 4.0 / sequence.beat_unit;
         draw.vertices.clear();
-        grid = {132, 132, width - 164, height - 218};
+        grid = {ui::timeline_x, ui::ruler_y + 20, width - ui::timeline_x - ui::right_margin, height - 218};
         pedal_lane = {grid.x, grid.y + grid.height, grid.width, 32};
         constrain_pitch_view();
-        draw.text(L"MINIDAW", 13, 28, 20, foreground, 100);
-        draw.rect({118, 25, 1, 12}, rule_color);
-        draw.text(L"PIANO SKETCH", 11, 136, 22, muted, 160);
-        draw.text(L"KONTAKT 8", 11, width - 155, 22, engine->ready ? foreground : muted, 100);
-        draw.rect({width - 35, 28, 4, 4}, engine->ready ? accent : muted, 2);
-        draw.rect({28, 55, width - 56, 1}, rule_color);
+        draw.text(L"MINIDAW", ui::body_size, ui::outer_margin, 20, ui::foreground, 100);
+        draw.rect({118, 25, 1, 12}, ui::rule_color);
+        draw.text(L"PIANO SKETCH", ui::label_size, 136, 22, ui::muted, 160);
+        draw.text(L"KONTAKT 8", ui::label_size, width - 155, 22, engine->ready ? ui::foreground : ui::muted, 100);
+        draw.rect({width - 35, 28, 4, 4}, engine->ready ? ui::accent : ui::muted, 2);
+        draw.rect({ui::outer_margin, ui::header_height, width - 2 * ui::outer_margin, 1}, ui::rule_color);
         constexpr std::array names{L"C", L"C#", L"D", L"Eb", L"E", L"F", L"F#", L"G", L"Ab", L"A", L"Bb", L"B"};
-        draw.text(std::format(L"{} {}", names[sequence.tonic], sequence.minor ? L"Minor" : L"Major"), 17, 30, 71, foreground, 160);
-        draw.text(std::to_wstring(sequence.bpm), 17, 210, 71, foreground, 60);
-        draw.text(L"BPM", 10, 266, 78, muted, 35);
-        draw.text(std::format(L"{}/{}", sequence.beats, sequence.beat_unit), 15, 327, 73, muted, 60);
+        const bool toolbar_hover = gesture == Gesture::none && popup == Popup::none && !help && !input;
+        for (const Rect area : {Rect{28, 65, 160, 35}, Rect{200, 65, 100, 35}, Rect{320, 65, 70, 35}, Rect{width - 110, 65, 84, 35}}) {
+            if (toolbar_hover && area.contains(pointer_x, pointer_y)) draw.rect(area, ui::active_surface, ui::control_radius);
+        }
+        draw.text(std::format(L"{} {}", names[sequence.tonic], sequence.minor ? L"Minor" : L"Major"), ui::value_size, ui::key_x, ui::toolbar_y, ui::foreground, 160);
+        draw.text(std::to_wstring(sequence.bpm), ui::value_size, ui::tempo_x, ui::toolbar_y, ui::foreground, 60);
+        draw.text(L"BPM", ui::unit_size, ui::tempo_unit_x, ui::toolbar_y + 7, ui::muted, 35);
+        draw.text(std::format(L"{}/{}", sequence.beats, sequence.beat_unit), ui::secondary_size, ui::meter_x, ui::toolbar_y + 2, ui::muted, 60);
+        const double pending = engine->seek.load();
+        const double position = pending >= 0 ? pending : engine->position.load();
+        draw.text(ui::time_label(position * 60.0 / sequence.bpm, true), ui::value_size, width - ui::clock_right, ui::toolbar_y, ui::foreground, 115);
         constexpr std::array steps{1.0, .5, .25, .125, 2.0 / 3, 1.0 / 3, 1.0 / 6};
         constexpr std::array step_names{L"1/4", L"1/8", L"1/16", L"1/32", L"1/4 T", L"1/8 T", L"1/16 T"};
-        draw.text(step_names[std::ranges::find(steps, snap) - steps.begin()], 13, width - 100, 76, muted, 70);
+        draw.text(step_names[std::ranges::find(steps, snap) - steps.begin()], ui::label_size, width - 84, ui::toolbar_y + 6, ui::muted, 56);
+        draw.text(L"BARS", ui::label_size, 32, ui::ruler_y + 3, ui::muted, 64);
         const float px = static_cast<float>(document.pixels_per_beat);
         const float rh = static_cast<float>(document.row_height);
         const auto x_at = [&](double beat) { return grid.x + static_cast<float>(beat - document.first_beat) * px; };
@@ -89,10 +104,10 @@ namespace minidaw {
             const float y = std::max(grid.y, top), bottom = std::min(end_y, top + rh);
             if (bottom <= y) continue;
             const bool tonic = degree % 7 == 0;
-            if (tonic) draw.rect({grid.x, y, grid.width, bottom - y}, tonic_row_color);
-            if (hover == Gesture::audition && grid.x > pointer_x && pointer_y >= y && pointer_y < bottom) draw.rect({28, y, grid.x - 32, bottom - y}, active_surface, 3);
-            draw.rect({grid.x, bottom - 1, grid.width, 1}, pitch_grid);
-            if (top >= grid.y && top + rh <= end_y) draw.text(document.label(degree), 11, 30, top + (rh - 15) / 2, tonic ? foreground : muted, 97);
+            if (tonic) draw.rect({grid.x, y, grid.width, bottom - y}, ui::tonic_row_color);
+            if (hover == Gesture::audition && grid.x > pointer_x && pointer_y >= y && pointer_y < bottom) draw.rect({28, y, grid.x - 32, bottom - y}, ui::active_surface, 3);
+            draw.rect({grid.x, bottom - 1, grid.width, 1}, ui::pitch_grid);
+            if (top >= grid.y && top + rh <= end_y) draw.text(document.label(degree), ui::label_size, ui::label_x, top + (rh - 15) / 2, tonic ? ui::foreground : ui::muted, 97);
         }
         const int snap_divisions = snap == 2.0 / 3 ? 3 : static_cast<int>(std::round(1 / snap));
         const int divisions = std::lcm(snap_divisions, sequence.beat_unit / 4);
@@ -106,8 +121,8 @@ namespace minidaw {
         const int label_stride = bar_stride * std::max(1, static_cast<int>(std::ceil(48 / (px * bar_length * bar_stride))));
         const int first_line = static_cast<int>(std::floor(document.first_beat * divisions / stride)) * stride;
         const int last_line = static_cast<int>(std::ceil((document.first_beat + grid.width / px) * divisions / stride)) * stride;
-        constexpr std::array mark_sizes{2.f, 1.f, 2.f, 2.f, 1.f};
-        constexpr std::array mark_colors{bar_grid, beat_grid, eighth_grid, sixteenth_grid, thirty_second_grid};
+        constexpr std::array mark_sizes{ui::bar_width, ui::beat_width, ui::dot_width, ui::dot_width, ui::beat_width};
+        constexpr std::array mark_colors{ui::bar_grid, ui::beat_grid, ui::eighth_grid, ui::sixteenth_grid, ui::thirty_second_grid};
         for (int step = first_line; step <= last_line; step += stride) {
             const double beat = static_cast<double>(step) / divisions;
             const float x = x_at(beat);
@@ -135,7 +150,7 @@ namespace minidaw {
                     if (bottom > y) draw.rect({left, y, right - left, bottom - y}, mark_colors[level]);
                 }
             }
-            if (bar && step / bar_steps % label_stride == 0 && x + 6 >= grid.x && x + 6 < end_x) draw.text(std::to_wstring(step / bar_steps + 1), 11, x + 6, 113, muted, std::min(45.f, end_x - x - 6));
+            if (bar && step / bar_steps % label_stride == 0 && x + 6 >= grid.x && x + 6 < end_x) draw.text(std::to_wstring(step / bar_steps + 1), ui::label_size, x + 6, ui::ruler_y + 2, ui::muted, std::min(45.f, end_x - x - 6));
         }
         constexpr std::array solfege{L"Do", L"Re", L"Mi", L"Fa", L"Sol", L"La", L"Ti"};
         constexpr std::array numerals{L"I", L"II", L"III", L"IV", L"V", L"VI", L"VII"};
@@ -156,11 +171,11 @@ namespace minidaw {
             const bool selected = selection.contains(note.id);
             const bool bass = note.voice == Voice::bass;
             const bool pointing = (gesture == Gesture::none || gesture == Gesture::velocity) && hovered == note.id;
-            const Color fill = selected ? (bass ? bass_note_selected_color : treble_note_selected_color) : pointing ? (bass ? bass_note_hover_color : treble_note_hover_color) : (bass ? bass_note_color : treble_note_color);
-            const Color border = selected ? note_selected_border_color : bass ? bass_note_border_color : treble_note_border_color;
-            const Color text = note_text_color;
-            const float border_width = std::round((selected ? 2.5f : 1.5f) * draw.scale) / draw.scale;
-            const float radius = std::min({3.f, (right - left) * .5f, (bottom - y) * .5f});
+            const ui::Color fill = selected ? (bass ? ui::note_active_colors[1] : ui::note_active_colors[0]) : pointing ? (bass ? ui::note_hover_colors[1] : ui::note_hover_colors[0]) : (bass ? ui::note_colors[1] : ui::note_colors[0]);
+            const ui::Color border = selected ? ui::note_active_border : bass ? ui::note_border_colors[1] : ui::note_border_colors[0];
+            const ui::Color text = ui::note_text_color;
+            const float border_width = std::round((selected ? ui::note_active_border_width : ui::note_border_width) * draw.scale) / draw.scale;
+            const float radius = std::min({ui::note_radius, (right - left) * .5f, (bottom - y) * .5f});
             draw.rect({left, y, right - left, bottom - y}, border, radius);
             if (right - left > 2 * border_width && bottom - y > 2 * border_width) draw.rect({left + border_width, y + border_width, right - left - 2 * border_width, bottom - y - 2 * border_width}, fill, std::max(0.f, radius - border_width));
             const auto edge_gesture = pointing && GetKeyState(VK_CONTROL) >= 0 ? hover : dragged == note.id ? gesture : Gesture::none;
@@ -197,15 +212,15 @@ namespace minidaw {
             const float bx = std::clamp(pointer_x, grid.x, end_x), by = std::clamp(pointer_y, grid.y, end_y);
             const Rect area{std::min(ax, bx), std::min(ay, by), std::abs(bx - ax), std::abs(by - ay)};
             draw.rect(area, {.4f, .72f, .9f, .12f}, 2);
-            draw.rect({area.x, area.y, area.width, 1}, accent);
-            draw.rect({area.x, area.y + area.height, area.width, 1}, accent);
-            draw.rect({area.x, area.y, 1, area.height}, accent);
-            draw.rect({area.x + area.width, area.y, 1, area.height}, accent);
+            draw.rect({area.x, area.y, area.width, 1}, ui::accent);
+            draw.rect({area.x, area.y + area.height, area.width, 1}, ui::accent);
+            draw.rect({area.x, area.y, 1, area.height}, ui::accent);
+            draw.rect({area.x + area.width, area.y, 1, area.height}, ui::accent);
         }
-        draw.rect({28, pedal_lane.y, width - 56, 1}, rule_color);
+        draw.rect({28, pedal_lane.y, width - 56, 1}, ui::rule_color);
         const bool sustain = engine->automatic_sustain;
-        const Color pedal_color = sustain ? accent : muted;
-        draw.text(L"SUSTAIN", 10, 30, pedal_lane.y + 10, pedal_color, 97);
+        const ui::Color pedal_color = sustain ? ui::accent : ui::muted;
+        draw.text(L"SUSTAIN", ui::unit_size, 30, pedal_lane.y + 10, pedal_color, 97);
         const float pedal_high = pedal_lane.y + 9, pedal_low = pedal_lane.y + 24;
         const double last_beat = document.first_beat + grid.width / px;
         if (bar_length * px < 2) draw.rect({grid.x, pedal_high, grid.width, 1}, pedal_color);
@@ -219,93 +234,91 @@ namespace minidaw {
             if (start >= grid.x && start < end_x) draw.rect({start, pedal_high, 1, pedal_low - pedal_high}, pedal_color);
             if (release >= grid.x && release < end_x) draw.rect({release, pedal_high, 1, pedal_low - pedal_high}, pedal_color);
         }
-        const float playhead_width = std::round(4.f * draw.scale) / draw.scale;
-        const float playhead = std::round((x_at(engine->position) - playhead_width * .5f) * draw.scale) / draw.scale;
+        const float playhead_width = std::round(ui::playhead_width * draw.scale) / draw.scale;
+        const float playhead = std::round((x_at(position) - playhead_width * .5f) * draw.scale) / draw.scale;
         const float playhead_left = std::max(grid.x, playhead), playhead_right = std::min(end_x, playhead + playhead_width);
-        if (playhead_right > playhead_left) draw.rect({playhead_left, 111, playhead_right - playhead_left, pedal_lane.y + pedal_lane.height - 111}, accent);
-        draw.rect({28, height - 42, width - 56, 1}, rule_color);
+        if (playhead_right > playhead_left) draw.rect({playhead_left, ui::ruler_y, playhead_right - playhead_left, pedal_lane.y + pedal_lane.height - ui::ruler_y}, ui::accent);
+        draw.rect({ui::outer_margin, height - ui::footer_height, width - 2 * ui::outer_margin, 1}, ui::rule_color);
         std::wstring status = std::format(L"Write: {}  ·  {} {}  /  {} selected", input_voice == Voice::treble ? L"Treble" : L"Bass", sequence.notes.size(), sequence.notes.size() == 1 ? L"note" : L"notes", selection.size());
         const auto detail = std::ranges::find(sequence.notes, dragged ? dragged : hovered, &Note::id);
         if (detail != sequence.notes.end()) status = std::format(L"{}  ·  {}  ·  Velocity {}", detail->voice == Voice::treble ? L"Treble" : L"Bass", document.label(document.degree(detail->pitch)), detail->velocity);
         if (std::chrono::steady_clock::now() < toast_until) status = toast;
         else if (!engine->ready) status = L"Loading Kontakt 8…";
-        draw.text(status, 11, 30, height - 28, muted, width - 680);
+        draw.text(status, ui::label_size, ui::label_x, height - 28, ui::muted, width - 680);
         if (engine->ready) {
-            constexpr Color warning_color{235 / 255.f, 195 / 255.f, 138 / 255.f, 1};
-            constexpr Color overload_color{1.f, .35f, .32f, 1.f};
             const auto now = std::chrono::steady_clock::now();
             const float elapsed = std::chrono::duration<float>(now - meter_updated).count();
             for (std::size_t channel = 0; channel < meter_db.size(); ++channel) {
                 const float amplitude = engine->output_peaks[channel].exchange(0.f, std::memory_order_relaxed);
                 const float db = amplitude > 0 ? 20.f * std::log10(amplitude) : -std::numeric_limits<float>::infinity();
-                meter_db[channel] = std::max({-60.f, db, meter_db[channel] - 24.f * elapsed});
+                meter_db[channel] = std::max({ui::meter_floor, db, meter_db[channel] - ui::meter_release * elapsed});
                 if (amplitude > 0 && db >= held_peak_db[channel]) {
                     held_peak_db[channel] = db;
-                    peak_hold_until[channel] = now + std::chrono::milliseconds(1500);
+                    peak_hold_until[channel] = now + ui::peak_hold;
                 } else if (now > peak_hold_until[channel]) {
                     const float release = std::chrono::duration<float>(now - std::max(meter_updated, peak_hold_until[channel])).count();
-                    held_peak_db[channel] = std::max(db, held_peak_db[channel] - 12.f * release);
-                    if (held_peak_db[channel] < -60.f) held_peak_db[channel] = -std::numeric_limits<float>::infinity();
+                    held_peak_db[channel] = std::max(db, held_peak_db[channel] - ui::peak_release * release);
+                    if (held_peak_db[channel] < ui::meter_floor) held_peak_db[channel] = -std::numeric_limits<float>::infinity();
                 }
             }
             meter_updated = now;
-            draw.text(std::format(L"{} Hz  ·  {} samples", engine->sample_rate, engine->period), 10, width - 634, height - 27, muted, 160);
-            const Rect gain_area{width - 464, height - 40, 90, 36};
+            draw.text(std::format(L"{} Hz  ·  {} samples", engine->sample_rate, engine->period), ui::unit_size, width - ui::output_info_right, height - 27, ui::muted, 160);
+            const Rect gain_area{width - ui::master_right, height - 40, 90, 36};
             const bool gain_hover = !help && popup == Popup::none && gain_area.contains(pointer_x, pointer_y);
-            if (gesture == Gesture::gain || gain_hover) draw.rect(gain_area, active_surface, 4);
-            draw.text(L"MASTER", 9, width - 456, height - 36, muted, 76);
+            if (gesture == Gesture::gain || gain_hover) draw.rect(gain_area, ui::active_surface, ui::control_radius);
+            draw.text(L"MASTER", ui::micro_size, width - ui::master_right + 8, height - 36, ui::muted, 76);
             const float gain_db = engine->master_db.load(std::memory_order_relaxed);
-            draw.text(gain_db == minimum_master_db ? L"−∞ dB" : std::format(L"{:.1f} dB", gain_db == 0 ? 0.f : gain_db), 12, width - 456, height - 23, gesture == Gesture::gain || gain_hover ? accent : foreground, 76);
-            const float meter_x = width - 331, meter_width = 156;
+            draw.text(gain_db == minimum_master_db ? L"−∞ dB" : std::format(L"{:.1f} dB", gain_db == 0 ? 0.f : gain_db), ui::detail_size, width - ui::master_right + 8, height - 23, gesture == Gesture::gain || gain_hover ? ui::accent : ui::foreground, 76);
+            const float meter_x = width - ui::output_meter_right, meter_width = ui::output_meter_width;
             for (std::size_t channel = 0; channel < meter_db.size(); ++channel) {
                 const float y = height - 32 + static_cast<float>(channel) * 8;
-                const float filled = meter_width * std::clamp((meter_db[channel] + 60.f) / 60.f, 0.f, 1.f);
-                draw.text(channel == 0 ? L"L" : L"R", 8, meter_x - 15, y - 4, muted, 10);
-                draw.rect({meter_x, y, meter_width, 4}, rule_color, 1);
-                if (filled > 0) draw.rect({meter_x, y, std::min(filled, meter_width * .9f), 4}, accent, 1);
-                if (filled > meter_width * .9f) draw.rect({meter_x + meter_width * .9f, y, filled - meter_width * .9f, 4}, meter_db[channel] > 0 ? overload_color : warning_color, 1);
-                if (held_peak_db[channel] >= -60.f) {
-                    const float held_x = meter_x + (meter_width - 1) * std::clamp((held_peak_db[channel] + 60.f) / 60.f, 0.f, 1.f);
-                    draw.rect({held_x, y - 1, 1, 6}, held_peak_db[channel] > 0 ? overload_color : foreground);
+                const float filled = meter_width * std::clamp((meter_db[channel] - ui::meter_floor) / -ui::meter_floor, 0.f, 1.f);
+                draw.text(channel == 0 ? L"L" : L"R", ui::caption_size, meter_x - 15, y - 4, ui::muted, 10);
+                draw.rect({meter_x, y, meter_width, 4}, ui::rule_color, 1);
+                if (filled > 0) draw.rect({meter_x, y, std::min(filled, meter_width * .9f), 4}, ui::accent, 1);
+                if (filled > meter_width * .9f) draw.rect({meter_x + meter_width * .9f, y, filled - meter_width * .9f, 4}, meter_db[channel] > 0 ? ui::overload_color : ui::warning_color, 1);
+                if (held_peak_db[channel] >= ui::meter_floor) {
+                    const float held_x = meter_x + (meter_width - 1) * std::clamp((held_peak_db[channel] - ui::meter_floor) / -ui::meter_floor, 0.f, 1.f);
+                    draw.rect({held_x, y - 1, 1, 6}, held_peak_db[channel] > 0 ? ui::overload_color : ui::foreground);
                 }
             }
             for (const int db : {-60, -36, -12, 0}) {
                 const float x = meter_x + meter_width * (db + 60.f) / 60.f;
-                draw.text(std::to_wstring(db), 8, x - 12, height - 15, muted, 24, true);
+                draw.text(std::to_wstring(db), ui::caption_size, x - 12, height - 15, ui::muted, 24, true);
             }
             const float peak_db = std::ranges::max(held_peak_db);
-            draw.text(L"PEAK dBFS", 8, width - 149, height - 36, muted, 70);
-            draw.text(peak_db == -std::numeric_limits<float>::infinity() ? L"−∞" : std::format(L"{:.1f}", peak_db), 12, width - 149, height - 23, peak_db > 0 ? overload_color : foreground, 70);
+            draw.text(L"PEAK dBFS", ui::caption_size, width - ui::peak_right, height - 36, ui::muted, 70);
+            draw.text(peak_db == -std::numeric_limits<float>::infinity() ? L"−∞" : std::format(L"{:.1f}", peak_db), ui::detail_size, width - ui::peak_right, height - 23, peak_db > 0 ? ui::overload_color : ui::foreground, 70);
             const bool overloaded = engine->overloaded.load(std::memory_order_relaxed);
-            const Rect overload_area{width - 74, height - 38, 46, 32};
-            if (overloaded) draw.rect(overload_area, {.2f, .04f, .04f, 1.f}, 4);
-            else if (!help && popup == Popup::none && overload_area.contains(pointer_x, pointer_y)) draw.rect(overload_area, hover_surface, 4);
-            draw.text(L"OVER", 10, width - 74, height - 27, overloaded ? overload_color : muted, 46, true);
+            const Rect overload_area{width - ui::overload_right, height - 38, 46, 32};
+            if (overloaded) draw.rect(overload_area, ui::overload_surface, ui::control_radius);
+            else if (!help && popup == Popup::none && overload_area.contains(pointer_x, pointer_y)) draw.rect(overload_area, ui::hover_surface, ui::control_radius);
+            draw.text(L"OVER", ui::unit_size, width - ui::overload_right, height - 27, overloaded ? ui::overload_color : ui::muted, 46, true);
         }
         if (popup != Popup::none) {
-            draw.rect(popup_area, rule_color, 7);
-            draw.rect({popup_area.x + 1, popup_area.y + 1, popup_area.width - 2, popup_area.height - 2}, surface_color, 6);
+            draw.rect(popup_area, ui::rule_color, ui::popup_radius);
+            draw.rect({popup_area.x + 1, popup_area.y + 1, popup_area.width - 2, popup_area.height - 2}, ui::surface_color, ui::popup_radius - 1);
             if (popup == Popup::key) {
                 for (int i = 0; i < 12; ++i) {
                     const float x = 39.f + (i % 6) * 47, y = 110.f + (i / 6) * 42;
-                    if (i == sequence.tonic) draw.rect({x, y, 44, 36}, active_surface, 4);
-                    draw.text(names[i], 14, x, y + 8, i == sequence.tonic ? accent : foreground, 44, true);
+                    if (i == sequence.tonic) draw.rect({x, y, 44, 36}, ui::active_surface, ui::control_radius);
+                    draw.text(names[i], 14, x, y + 8, i == sequence.tonic ? ui::accent : ui::foreground, 44, true);
                 }
-                draw.text(L"Major", 13, 48, 209, sequence.minor ? muted : accent, 110, true);
-                draw.text(L"Minor", 13, 185, 209, sequence.minor ? accent : muted, 110, true);
+                draw.text(L"Major", ui::body_size, 48, 209, sequence.minor ? ui::muted : ui::accent, 110, true);
+                draw.text(L"Minor", ui::body_size, 185, 209, sequence.minor ? ui::accent : ui::muted, 110, true);
             } else if (popup == Popup::snap || popup == Popup::meter) {
                 for (int i = 0; i < 7; ++i) {
                     const auto [beats, beat_unit] = meter_presets[i];
                     const bool active = popup == Popup::snap ? snap == steps[i] : sequence.beats == beats && sequence.beat_unit == beat_unit;
-                    draw.text(popup == Popup::snap ? std::wstring(step_names[i]) : std::format(L"{}/{}", beats, beat_unit), 13, popup_area.x + 14, popup_area.y + 9 + i * 30.f, active ? accent : foreground, popup_area.width - 28);
+                    draw.text(popup == Popup::snap ? std::wstring(step_names[i]) : std::format(L"{}/{}", beats, beat_unit), ui::body_size, popup_area.x + 14, popup_area.y + 9 + i * 30.f, active ? ui::accent : ui::foreground, popup_area.width - 28);
                 }
             }
         }
         if (help) {
             const float left = width / 2 - 310, top = height / 2 - 297.5f;
-            draw.rect({left, top, 620, 595}, rule_color, 10);
-            draw.rect({left + 1, top + 1, 618, 593}, surface_color, 9);
-            draw.text(L"Editing gestures", 21, left + 26, top + 20, foreground, 550);
+            draw.rect({left, top, 620, 595}, ui::rule_color, 10);
+            draw.rect({left + 1, top + 1, 618, 593}, ui::surface_color, 9);
+            draw.text(L"Editing gestures", 21, left + 26, top + 20, ui::foreground, 550);
             const std::array<std::pair<const wchar_t*, const wchar_t*>, 23> lines{{
                 {L"Blank drag / Shift + drag", L"Select / add to selection"},
                 {L"Ctrl + click / drag", L"Write note / set its length"},
@@ -332,11 +345,12 @@ namespace minidaw {
                 {L"F2 / Ctrl + W / Esc", L"Piano / quit / cancel"}
             }};
             for (std::size_t i = 0; i < lines.size(); ++i) {
-                draw.text(lines[i].first, 12, left + 26, top + 61 + static_cast<float>(i) * 23, accent, 270);
-                draw.text(lines[i].second, 12, left + 306, top + 61 + static_cast<float>(i) * 23, foreground, 290);
+                draw.text(lines[i].first, ui::detail_size, left + 26, top + 61 + static_cast<float>(i) * 23, ui::accent, 270);
+                draw.text(lines[i].second, ui::detail_size, left + 306, top + 61 + static_cast<float>(i) * 23, ui::foreground, 290);
             }
         }
         draw.draw();
+        frames.continuous = engine->playing.load() || engine->preview_held.load() || gesture != Gesture::none || std::ranges::max(meter_db) > ui::meter_floor || std::ranges::max(held_peak_db) >= ui::meter_floor || std::chrono::steady_clock::now() < toast_until;
     }
 
     void Window::inherit_selection() {
@@ -367,7 +381,8 @@ namespace minidaw {
         playback_start = std::max(0.0, std::round(beat / snap) * snap);
         engine->seek = playback_start;
         follow = true;
-        follow_after = std::chrono::steady_clock::now() + std::chrono::milliseconds(650);
+        follow_from = document.first_beat;
+        follow_resume_at = std::chrono::steady_clock::now();
     }
     void Window::finish_gesture(bool commit) {
         if (gesture == Gesture::none) return;
@@ -396,7 +411,10 @@ namespace minidaw {
             document.top_degree = original_top;
         }
         if (commit && operation == Gesture::pan && !moved) locate(anchor_beat);
-        if (commit && operation == Gesture::seek) follow_after = std::chrono::steady_clock::now() + std::chrono::milliseconds(650);
+        if (follow && engine->playing) {
+            follow_from = document.first_beat;
+            follow_resume_at = std::chrono::steady_clock::now() + (operation == Gesture::seek ? std::chrono::milliseconds{0} : ui::follow_delay);
+        } else follow_resume_at.reset();
         if (commit && dragged) {
             const auto& note = *std::ranges::find(document.sequence.notes, dragged, &Note::id);
             last_length = note.length;
@@ -441,6 +459,7 @@ namespace minidaw {
         }
     }
     void Window::pointer(UINT message, float x, float y, WPARAM flags) {
+        frames.dirty = true;
         pointer_x = x;
         pointer_y = y;
         auto& sequence = document.sequence;
@@ -514,6 +533,7 @@ namespace minidaw {
                 if (Rect{0, grid.y, grid.x, grid.height}.contains(x, y)) {
                     locate(0);
                     document.first_beat = 0;
+                    follow_from = 0;
                     return;
                 }
                 if (!grid.contains(x, y) && !pedal_lane.contains(x, y) && !(x >= grid.x && x < grid.x + grid.width && y >= 100 && y < grid.y)) return;
@@ -530,7 +550,7 @@ namespace minidaw {
                 cursor();
                 return;
             }
-            if (y < 55 && x > width - 160) {
+            if (y < ui::header_height && x > width - 160) {
                 if (engine->ready) engine->show_plugin();
                 return;
             }
@@ -544,7 +564,7 @@ namespace minidaw {
                 const float scale = renderer->scale;
                 input_original = std::to_wstring(sequence.bpm);
                 input = CreateWindowExW(0, L"EDIT", input_original.c_str(), WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NUMBER, static_cast<int>(area.x * scale), static_cast<int>(area.y * scale), static_cast<int>(area.width * scale), static_cast<int>(area.height * scale), handle, nullptr, GetModuleHandleW(nullptr), nullptr);
-                input_font = CreateFontW(-static_cast<int>(16 * scale), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+                input_font = CreateFontW(-static_cast<int>(ui::value_size * scale), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, ui::font_family);
                 SendMessageW(input, WM_SETFONT, reinterpret_cast<WPARAM>(input_font), TRUE);
                 SendMessageW(input, EM_SETLIMITTEXT, 32, 0);
                 SetWindowLongPtrW(input, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
@@ -574,7 +594,7 @@ namespace minidaw {
                 cursor();
                 return;
             }
-            if (engine->ready && Rect{width - 74, height - 38, 46, 32}.contains(x, y)) {
+            if (engine->ready && Rect{width - ui::overload_right, height - 38, 46, 32}.contains(x, y)) {
                 engine->overloaded.store(false, std::memory_order_relaxed);
                 return;
             }
@@ -683,7 +703,6 @@ namespace minidaw {
         }
         if (gesture == Gesture::pan) {
             if (moved) {
-                follow = false;
                 document.first_beat = std::max(0.0, original_first - (x - anchor_x) / document.pixels_per_beat);
                 if (pan_vertical) {
                     document.top_degree = original_top + (y - anchor_y) / document.row_height;
@@ -745,6 +764,7 @@ namespace minidaw {
     }
 
     void Window::wheel(float x, float y, double steps, bool horizontal) {
+        frames.dirty = true;
         if (input || help || popup != Popup::none) return;
         if (!horizontal && (gesture == Gesture::none || gesture == Gesture::velocity) && hit(x, y).first == Gesture::gain) {
             if (gesture == Gesture::velocity) finish_gesture(true);
@@ -788,15 +808,14 @@ namespace minidaw {
             const double beat = document.first_beat + (x - grid.x) / document.pixels_per_beat;
             document.pixels_per_beat = std::clamp(document.pixels_per_beat * std::pow(1.15, steps), 12.0, 720.0);
             document.first_beat = std::max(0.0, beat - (x - grid.x) / document.pixels_per_beat);
-            follow_after = std::chrono::steady_clock::now() + std::chrono::milliseconds(650);
         } else if (shift && !horizontal) {
             document.top_degree += steps * 2;
             constrain_pitch_view();
-            follow = false;
         } else {
             document.first_beat = std::max(0.0, document.first_beat + (horizontal ? steps : -steps) * 100 / document.pixels_per_beat);
-            follow = false;
         }
+        follow_from = document.first_beat;
+        follow_resume_at = std::chrono::steady_clock::now() + ui::follow_delay;
         pointer_x = x;
         pointer_y = y;
         std::tie(hover, hovered) = hit(x, y);
@@ -897,11 +916,13 @@ namespace minidaw {
             if (!engine->playing) {
                 if (play_from_locator) engine->seek = playback_start;
                 follow = true;
-                follow_after = {};
+                follow_from = document.first_beat;
+                follow_resume_at = std::chrono::steady_clock::now();
             }
             engine->preview = -2;
             engine->preview_held = false;
             engine->playing = !engine->playing;
+            if (!engine->playing) follow_resume_at.reset();
             return;
         }
         if (key == VK_RETURN) {
@@ -912,11 +933,13 @@ namespace minidaw {
         if (key == VK_HOME) {
             locate(0);
             document.first_beat = 0;
+            follow_from = 0;
             return;
         }
         if (key == 'F' && !control) {
             follow = true;
-            follow_after = {};
+            follow_from = document.first_beat;
+            follow_resume_at = std::chrono::steady_clock::now();
             return;
         }
         if (key == 'P' && !control) {
@@ -976,7 +999,8 @@ namespace minidaw {
             engine->seek = 0;
             playback_start = 0;
             follow = true;
-            follow_after = {};
+            follow_from = document.first_beat;
+            follow_resume_at = std::chrono::steady_clock::now();
             changed();
             return;
         }
@@ -1047,7 +1071,7 @@ namespace minidaw {
         if (message == WM_CONTEXTMENU || message == WM_RBUTTONDOWN || message == WM_RBUTTONUP || message == WM_RBUTTONDBLCLK) return 0;
         if (message == WM_KEYDOWN && (w_param == VK_RETURN || w_param == VK_ESCAPE)) {
             self->finish_tempo_input(w_param == VK_RETURN);
-            self->paint();
+            self->frames.dirty = true;
             return 0;
         }
         if (message == WM_CHAR && (w_param == VK_RETURN || w_param == VK_ESCAPE || w_param == VK_TAB)) return 0;
@@ -1077,13 +1101,17 @@ namespace minidaw {
                     if (left) return HTLEFT;
                     if (right) return HTRIGHT;
                 }
-                if (point.y < 55 * scale && point.x < client.right - 170 * scale) return HTCAPTION;
+                if (point.y < ui::header_height * scale && point.x < client.right - 170 * scale) return HTCAPTION;
                 return HTCLIENT;
             }
             if (message == WM_GETMINMAXINFO) {
                 auto* info = reinterpret_cast<MINMAXINFO*>(l_param);
                 const float scale = GetDpiForWindow(window) / 96.f;
                 info->ptMinTrackSize = {static_cast<LONG>(960 * scale), static_cast<LONG>(600 * scale)};
+                MONITORINFO monitor{sizeof(MONITORINFO)};
+                GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor);
+                info->ptMaxPosition = {monitor.rcWork.left - monitor.rcMonitor.left, monitor.rcWork.top - monitor.rcMonitor.top};
+                info->ptMaxSize = {monitor.rcWork.right - monitor.rcWork.left, monitor.rcWork.bottom - monitor.rcWork.top};
                 return 0;
             }
             if (message == WM_ERASEBKGND) return 1;
@@ -1098,9 +1126,11 @@ namespace minidaw {
                 BeginPaint(window, &paint);
                 EndPaint(window, &paint);
                 self->paint();
+                self->frames.dirty = false;
                 return 0;
             }
             if (message == WM_SIZE && self->renderer) {
+                self->frames.dirty = true;
                 self->finish_tempo_input(true);
                 self->finish_gesture(false);
                 self->popup = Popup::none;
@@ -1112,6 +1142,7 @@ namespace minidaw {
                 return 0;
             }
             if (message == WM_DPICHANGED && self->renderer) {
+                self->frames.dirty = true;
                 self->finish_tempo_input(true);
                 self->finish_gesture(false);
                 self->popup = Popup::none;
@@ -1122,36 +1153,66 @@ namespace minidaw {
                 self->cursor();
                 return 0;
             }
+            if (message == WM_DISPLAYCHANGE) {
+                self->frames.monitor = nullptr;
+                self->frames.dirty = true;
+                return 0;
+            }
             if (message == WM_TIMER) {
-                if (w_param == 1) {
+                if (w_param == 2) {
                     if (self->engine->ready) self->engine->idle();
-                    const auto gesture = self->gesture;
-                    const bool note_drag = gesture == Gesture::move || gesture == Gesture::copy || gesture == Gesture::create || gesture == Gesture::resize_end || gesture == Gesture::marquee;
-                    const bool time_drag = note_drag || gesture == Gesture::seek;
-                    if (self->moved && time_drag && GetCapture() == window) {
-                        auto& document = self->document;
-                        const auto& grid = self->grid;
-                        const float x = self->pointer_x, y = self->pointer_y;
-                        const double horizontal = x < grid.x + 24 ? std::max(-40.f, x - grid.x - 24) : x > grid.x + grid.width - 24 ? std::min(40.f, x - grid.x - grid.width + 24) : 0;
-                        const double vertical = !note_drag ? 0 : y < grid.y + 24 ? std::max(-40.f, y - grid.y - 24) : y > grid.y + grid.height - 24 ? std::min(40.f, y - grid.y - grid.height + 24) : 0;
-                        if (horizontal || vertical) {
-                            document.first_beat = std::max(0.0, document.first_beat + horizontal * .2 / document.pixels_per_beat);
-                            document.top_degree -= vertical * .2 / document.row_height;
-                            self->constrain_pitch_view();
-                            const WPARAM flags = (GetKeyState(VK_SHIFT) < 0 ? MK_SHIFT : 0) | (GetKeyState(VK_CONTROL) < 0 ? MK_CONTROL : 0);
-                            self->pointer(WM_MOUSEMOVE, x, y, flags);
-                        }
+                    for (const auto& peak : self->engine->output_peaks)
+                        if (peak.load(std::memory_order_relaxed) > .001f) self->frames.dirty = true;
+                } else if (w_param == 3) {
+                    self->finish_gesture(true);
+                    self->frames.dirty = true;
+                }
+                return 0;
+            }
+            if (message == WM_APP + 6) {
+                const auto gesture = self->gesture;
+                const bool note_drag = gesture == Gesture::move || gesture == Gesture::copy || gesture == Gesture::create || gesture == Gesture::resize_end || gesture == Gesture::marquee;
+                const bool time_drag = note_drag || gesture == Gesture::seek;
+                if (self->moved && time_drag && GetCapture() == window) {
+                    auto& document = self->document;
+                    const auto& grid = self->grid;
+                    const float x = self->pointer_x, y = self->pointer_y;
+                    const double horizontal = x < grid.x + 24 ? std::max(-40.f, x - grid.x - 24) : x > grid.x + grid.width - 24 ? std::min(40.f, x - grid.x - grid.width + 24) : 0;
+                    const double vertical = !note_drag ? 0 : y < grid.y + 24 ? std::max(-40.f, y - grid.y - 24) : y > grid.y + grid.height - 24 ? std::min(40.f, y - grid.y - grid.height + 24) : 0;
+                    if (horizontal || vertical) {
+                        document.first_beat = std::max(0.0, document.first_beat + horizontal * 12.5 * self->frames.elapsed / document.pixels_per_beat);
+                        document.top_degree -= vertical * 12.5 * self->frames.elapsed / document.row_height;
+                        self->constrain_pitch_view();
+                        const WPARAM flags = (GetKeyState(VK_SHIFT) < 0 ? MK_SHIFT : 0) | (GetKeyState(VK_CONTROL) < 0 ? MK_CONTROL : 0);
+                        self->pointer(WM_MOUSEMOVE, x, y, flags);
                     }
-                    if (self->engine->playing && self->follow && self->gesture == Gesture::none && !self->input && !self->help && self->popup == Popup::none && std::chrono::steady_clock::now() >= self->follow_after) {
-                        self->document.first_beat = std::max(0.0, self->engine->position.load() - self->grid.width / (2 * self->document.pixels_per_beat));
+                }
+                if (self->engine->playing && self->follow) {
+                    const auto now = std::chrono::steady_clock::now();
+                    if ((self->gesture != Gesture::none && self->gesture != Gesture::gain) || self->input || self->help || self->popup != Popup::none) {
+                        self->follow_from = self->document.first_beat;
+                        self->follow_resume_at = now + ui::follow_delay;
+                    } else {
+                        const double pending = self->engine->seek.load();
+                        const double position = pending >= 0 ? pending : self->engine->position.load();
+                        const double target = std::max(0.0, position - self->grid.width / (2 * self->document.pixels_per_beat));
+                        if (self->follow_resume_at) {
+                            const double elapsed = std::chrono::duration<double>(now - *self->follow_resume_at).count();
+                            const double phase = std::clamp(elapsed / std::chrono::duration<double>(ui::follow_duration).count(), 0., 1.);
+                            const double blend = phase * phase * phase * (10 + phase * (6 * phase - 15));
+                            self->document.first_beat = std::lerp(self->follow_from, target, blend);
+                            if (phase == 1) self->follow_resume_at.reset();
+                        } else self->document.first_beat = target;
                         std::tie(self->hover, self->hovered) = self->hit(self->pointer_x, self->pointer_y);
                     }
-                    self->paint();
-                } else if (w_param == 3) self->finish_gesture(true);
+                }
+                self->paint();
+                self->frames.dirty = false;
                 return 0;
             }
             if (message == WM_APP + 1) {
                 self->engine->initialize();
+                self->frames.dirty = true;
                 if (!std::filesystem::exists(self->engine->directory / "piano.component")) self->engine->show_plugin();
                 return 0;
             }
@@ -1167,6 +1228,7 @@ namespace minidaw {
             }
             if (message == WM_APP + 5) {
                 if (self->input == reinterpret_cast<HWND>(w_param) && GetFocus() != self->input) self->finish_tempo_input(true);
+                self->frames.dirty = true;
                 return 0;
             }
             if ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN || message == WM_KEYUP || message == WM_SYSKEYUP) && w_param == VK_MENU) {
@@ -1178,13 +1240,13 @@ namespace minidaw {
                     self->pointer(WM_MOUSEMOVE, point.x / self->renderer->scale, point.y / self->renderer->scale, flags);
                 }
                 self->cursor();
-                self->paint();
+                self->frames.dirty = true;
                 return 0;
             }
             if (message == WM_KEYDOWN || (message == WM_SYSKEYDOWN && w_param == VK_ESCAPE && self->gesture != Gesture::none)) {
                 if (!(l_param & (1LL << 30)) || w_param == VK_LEFT || w_param == VK_RIGHT || w_param == VK_UP || w_param == VK_DOWN || w_param == VK_DELETE || w_param == VK_BACK) self->key(w_param);
                 self->cursor();
-                self->paint();
+                self->frames.dirty = true;
                 return 0;
             }
             if (message == WM_KEYUP || message == WM_SYSKEYUP || message == WM_SYSKEYDOWN) {
@@ -1215,10 +1277,12 @@ namespace minidaw {
                 self->hover = Gesture::none;
                 self->hovered = 0;
                 self->pointer_x = self->pointer_y = -1;
+                self->frames.dirty = true;
                 return 0;
             }
             if (message == WM_CAPTURECHANGED && reinterpret_cast<HWND>(l_param) != window) self->finish_gesture(false);
             if (message == WM_CANCELMODE || (message == WM_ACTIVATE && LOWORD(w_param) == WA_INACTIVE)) {
+                self->frames.dirty = true;
                 self->finish_tempo_input(false);
                 self->finish_gesture(false);
                 self->popup = Popup::none;
@@ -1246,7 +1310,7 @@ namespace minidaw {
     }
     std::pair<Window::Gesture, std::uint64_t> Window::hit(float x, float y) const {
         if (help || popup != Popup::none) return {Gesture::none, 0};
-        if (engine->ready && Rect{width - 464, height - 40, 90, 36}.contains(x, y)) return {Gesture::gain, 0};
+        if (engine->ready && Rect{width - ui::master_right, height - 40, 90, 36}.contains(x, y)) return {Gesture::gain, 0};
         if (pedal_lane.contains(x, y)) return {Gesture::seek, 0};
         const float end_x = grid.x + grid.width, end_y = grid.y + grid.height;
         if (x >= grid.x && x < end_x && y >= 100 && y < grid.y) return {Gesture::seek, 0};
@@ -1353,7 +1417,8 @@ namespace minidaw {
         if (target == Gesture::resize_end) shape = IDC_SIZEWE;
         if (target == Gesture::gain) shape = IDC_SIZENS;
         if (target == Gesture::pan || target == Gesture::audition) shape = IDC_HAND;
-        if (gesture == Gesture::none && !help && popup == Popup::none && engine->ready && Rect{width - 74, height - 38, 46, 32}.contains(pointer_x, pointer_y)) shape = IDC_HAND;
+        if (gesture == Gesture::none && !help && popup == Popup::none && engine->ready && Rect{width - ui::overload_right, height - 38, 46, 32}.contains(pointer_x, pointer_y)) shape = IDC_HAND;
+        if (gesture == Gesture::none && !help && popup == Popup::none && !input && (Rect{28, 65, 160, 35}.contains(pointer_x, pointer_y) || Rect{320, 65, 70, 35}.contains(pointer_x, pointer_y) || Rect{width - 110, 65, 84, 35}.contains(pointer_x, pointer_y))) shape = IDC_HAND;
         if (gesture == Gesture::none && popup == Popup::none && Rect{200, 65, 100, 35}.contains(pointer_x, pointer_y)) shape = IDC_IBEAM;
         SetCursor(LoadCursorW(nullptr, shape));
     }

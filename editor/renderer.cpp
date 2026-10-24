@@ -19,7 +19,7 @@ namespace editor {
         std::array<std::uint32_t, 4> track{};
         std::array<float, 4> screen{};
         std::array<float, 4> color{};
-        float playhead{};
+        float focus_strength{};
     };
 
     Buffer::Buffer(const vk::raii::PhysicalDevice& physical, const vk::raii::Device& device, vk::DeviceSize size, vk::BufferUsageFlags usage) {
@@ -69,18 +69,20 @@ namespace editor {
         atlas_view    = vk::raii::ImageView(device, {.image = *atlas, .viewType = vk::ImageViewType::e2D, .format = vk::Format::eR8Unorm, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}});
         sampler      = vk::raii::Sampler(device, {.magFilter = vk::Filter::eLinear, .minFilter = vk::Filter::eLinear, .mipmapMode = vk::SamplerMipmapMode::eNearest, .addressModeU = vk::SamplerAddressMode::eClampToEdge, .addressModeV = vk::SamplerAddressMode::eClampToEdge, .addressModeW = vk::SamplerAddressMode::eClampToEdge});
         atlas_staging = Buffer(physical, device, atlas_pixels.size(), vk::BufferUsageFlagBits::eTransferSrc);
-        vertex_buffer = Buffer(physical, device, 4 * 1024 * 1024, vk::BufferUsageFlagBits::eVertexBuffer);
+        vertex_buffer = Buffer(physical, device, vertex_capacity, vk::BufferUsageFlagBits::eVertexBuffer);
+        focus_buffer  = Buffer(physical, device, focus_capacity, vk::BufferUsageFlagBits::eStorageBuffer);
         wave_buffer   = Buffer(physical, device, 16, vk::BufferUsageFlagBits::eStorageBuffer);
 
-        const std::array bindings{vk::DescriptorSetLayoutBinding{.binding = 0, .descriptorType = vk::DescriptorType::eSampledImage, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}, vk::DescriptorSetLayoutBinding{.binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex}, vk::DescriptorSetLayoutBinding{.binding = 2, .descriptorType = vk::DescriptorType::eSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}};
+        const std::array bindings{vk::DescriptorSetLayoutBinding{.binding = 0, .descriptorType = vk::DescriptorType::eSampledImage, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}, vk::DescriptorSetLayoutBinding{.binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex}, vk::DescriptorSetLayoutBinding{.binding = 2, .descriptorType = vk::DescriptorType::eSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}, vk::DescriptorSetLayoutBinding{.binding = 3, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}};
         descriptor_layout = vk::raii::DescriptorSetLayout(device, {.bindingCount = static_cast<std::uint32_t>(bindings.size()), .pBindings = bindings.data()});
-        const std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1}, vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 1}, vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1}};
+        const std::array sizes{vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1}, vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 2}, vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1}};
         descriptor_pool = vk::raii::DescriptorPool(device, {.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, .maxSets = 1, .poolSizeCount = static_cast<std::uint32_t>(sizes.size()), .pPoolSizes = sizes.data()});
         descriptor     = std::move(vk::raii::DescriptorSets(device, {.descriptorPool = *descriptor_pool, .descriptorSetCount = 1, .pSetLayouts = &*descriptor_layout}).front());
         const vk::DescriptorImageInfo image_info{.imageView = *atlas_view, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
         const vk::DescriptorImageInfo sampler_info{.sampler = *sampler};
         const vk::DescriptorBufferInfo buffer_info{.buffer = *wave_buffer.handle, .range = vk::WholeSize};
-        const std::array writes{vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampledImage, .pImageInfo = &image_info}, vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &buffer_info}, vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampler, .pImageInfo = &sampler_info}};
+        const vk::DescriptorBufferInfo focus_info{.buffer = *focus_buffer.handle, .range = vk::WholeSize};
+        const std::array writes{vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampledImage, .pImageInfo = &image_info}, vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &buffer_info}, vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampler, .pImageInfo = &sampler_info}, vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &focus_info}};
         device.updateDescriptorSets(writes, {});
         const vk::PushConstantRange push_range{.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .size = sizeof(Push)};
         pipeline_layout = vk::raii::PipelineLayout(device, {.setLayoutCount = 1, .pSetLayouts = &*descriptor_layout, .pushConstantRangeCount = 1, .pPushConstantRanges = &push_range});
@@ -101,7 +103,7 @@ namespace editor {
                 stages[i]  = {.stage = i == 0 ? vk::ShaderStageFlagBits::eVertex : vk::ShaderStageFlagBits::eFragment, .module = *modules[i], .pName = "main"};
             }
             const vk::VertexInputBindingDescription binding{.binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex};
-            const std::array attributes{vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32Sfloat, 0}, vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32Sfloat, 8}, vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32A32Sfloat, 16}, vk::VertexInputAttributeDescription{3, 0, vk::Format::eR32G32B32A32Sfloat, 32}};
+            const std::array attributes{vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32Sfloat, 0}, vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32Sfloat, 8}, vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32A32Sfloat, 16}, vk::VertexInputAttributeDescription{3, 0, vk::Format::eR32G32B32A32Sfloat, 32}, vk::VertexInputAttributeDescription{4, 0, vk::Format::eR32G32Sfloat, 48}};
             const vk::PipelineVertexInputStateCreateInfo input{.vertexBindingDescriptionCount = waveform ? 0u : 1u, .pVertexBindingDescriptions = &binding, .vertexAttributeDescriptionCount = waveform ? 0u : static_cast<std::uint32_t>(attributes.size()), .pVertexAttributeDescriptions = attributes.data()};
             const vk::PipelineInputAssemblyStateCreateInfo assembly{.topology = vk::PrimitiveTopology::eTriangleList};
             const vk::PipelineViewportStateCreateInfo viewport{.viewportCount = 1, .scissorCount = 1};
@@ -123,6 +125,8 @@ namespace editor {
         finished          = vk::raii::Fence(device, {.flags = vk::FenceCreateFlagBits::eSignaled});
         const auto result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory2), reinterpret_cast<IUnknown**>(fonts.GetAddressOf()));
         if (FAILED(result)) throw std::runtime_error("Unable to initialize DirectWrite.");
+        fonts->CreateTypography(&typography);
+        typography->AddFontFeature({DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES, 1});
         resize();
     }
 
@@ -139,7 +143,7 @@ namespace editor {
         presented.clear();
         images.clear();
         swapchain.clear();
-        auto count = std::max(capabilities.minImageCount, 3u);
+        auto count = std::max(capabilities.minImageCount, 2u);
         if (capabilities.maxImageCount) count = std::min(count, capabilities.maxImageCount);
         swapchain = vk::raii::SwapchainKHR(device, {.surface = *surface, .minImageCount = count, .imageFormat = vk::Format::eB8G8R8A8Srgb, .imageColorSpace = vk::ColorSpaceKHR::eSrgbNonlinear, .imageExtent = extent, .imageArrayLayers = 1, .imageUsage = vk::ImageUsageFlagBits::eColorAttachment, .imageSharingMode = vk::SharingMode::eExclusive, .preTransform = capabilities.currentTransform, .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque, .presentMode = vk::PresentModeKHR::eFifo, .clipped = true});
         images    = swapchain.getImages();
@@ -182,17 +186,17 @@ namespace editor {
         atlas_dirty = true;
     }
 
-    void Renderer::rect(Rect area, Color color, float radius) {
+    void Renderer::rect(Rect area, ui::Color color, float radius) {
         area.x *= scale;
         area.y *= scale;
         area.width *= scale;
         area.height *= scale;
-        for (const auto& corner : std::array{std::array{0.f, 0.f}, std::array{1.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 1.f}}) vertices.push_back({area.x + area.width * corner[0], area.y + area.height * corner[1], area.width * corner[0], area.height * corner[1], color, radius > 0 ? 2.f : 0.f, radius * scale, area.width, area.height});
+        for (const auto& corner : std::array{std::array{0.f, 0.f}, std::array{1.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 1.f}}) vertices.push_back({area.x + area.width * corner[0], area.y + area.height * corner[1], area.width * corner[0], area.height * corner[1], color, radius > 0 ? 2.f : 0.f, radius * scale, area.width, area.height, focus_levels});
     }
 
-    void Renderer::text(std::wstring_view value, float size, float x, float y, Color color, float width, bool centered, bool fit) {
+    float Renderer::text(std::wstring_view value, float size, float x, float y, ui::Color color, float width, bool centered, bool fit) {
         Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
-        auto result = fonts->CreateTextFormat(L"Segoe UI Variable", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size * scale, L"en-US", &format);
+        auto result = fonts->CreateTextFormat(ui::font_family, nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size * scale, L"en-US", &format);
         if (FAILED(result)) throw std::runtime_error("Unable to create text format.");
         format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         if (centered) format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -205,14 +209,15 @@ namespace editor {
         Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
         result = fonts->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format.Get(), width * scale, size * scale * 2, &layout);
         if (FAILED(result)) throw std::runtime_error("Unable to lay out text.");
-        if (fit) {
-            DWRITE_TEXT_METRICS metrics{};
-            layout->GetMetrics(&metrics);
-            if (metrics.widthIncludingTrailingWhitespace > width * scale) return;
-        }
+        layout->SetTypography(typography.Get(), {0, static_cast<UINT32>(value.size())});
+        DWRITE_TEXT_METRICS metrics{};
+        layout->GetMetrics(&metrics);
+        const float advance = metrics.widthIncludingTrailingWhitespace / scale;
+        if (fit && advance > width) return advance;
         text_color = color;
         result    = layout->Draw(nullptr, this, x * scale, y * scale);
         if (FAILED(result)) throw std::runtime_error("Unable to rasterize text.");
+        return advance;
     }
 
     void Renderer::draw() {
@@ -226,7 +231,20 @@ namespace editor {
             resize();
             return;
         }
-        std::memcpy(vertex_buffer.mapped, vertices.data(), vertices.size() * sizeof(Vertex));
+        const auto vertex_bytes = vertices.size() * sizeof(Vertex);
+        if (vertex_bytes > vertex_capacity) {
+            vertex_capacity = std::bit_ceil(vertex_bytes);
+            vertex_buffer = Buffer(physical, device, vertex_capacity, vk::BufferUsageFlagBits::eVertexBuffer);
+        }
+        std::memcpy(vertex_buffer.mapped, vertices.data(), vertex_bytes);
+        const auto focus_bytes = focus_columns.size() * sizeof(focus_columns.front());
+        if (focus_bytes > focus_capacity) {
+            focus_capacity = std::bit_ceil(focus_bytes);
+            focus_buffer = Buffer(physical, device, focus_capacity, vk::BufferUsageFlagBits::eStorageBuffer);
+            const vk::DescriptorBufferInfo focus_info{.buffer = *focus_buffer.handle, .range = vk::WholeSize};
+            device.updateDescriptorSets(vk::WriteDescriptorSet{.dstSet = *descriptor, .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &focus_info}, {});
+        }
+        std::memcpy(focus_buffer.mapped, focus_columns.data(), focus_bytes);
         command.reset();
         command.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
         if (atlas_dirty) {
@@ -247,13 +265,13 @@ namespace editor {
         vk::ImageMemoryBarrier2 present_barrier{.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput, .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput, .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite, .oldLayout = vk::ImageLayout::eUndefined, .newLayout = vk::ImageLayout::eColorAttachmentOptimal, .srcQueueFamilyIndex = vk::QueueFamilyIgnored, .dstQueueFamilyIndex = vk::QueueFamilyIgnored, .image = images[index], .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
         command.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &present_barrier});
         const auto linear = [](float value) { return value <= .04045f ? value / 12.92f : std::pow((value + .055f) / 1.055f, 2.4f); };
-        const vk::RenderingAttachmentInfo attachment{.imageView = *views[index], .imageLayout = vk::ImageLayout::eColorAttachmentOptimal, .loadOp = vk::AttachmentLoadOp::eClear, .storeOp = vk::AttachmentStoreOp::eStore, .clearValue = vk::ClearValue(vk::ClearColorValue(std::array{linear(background.r), linear(background.g), linear(background.b), background.a}))};
+        const vk::RenderingAttachmentInfo attachment{.imageView = *views[index], .imageLayout = vk::ImageLayout::eColorAttachmentOptimal, .loadOp = vk::AttachmentLoadOp::eClear, .storeOp = vk::AttachmentStoreOp::eStore, .clearValue = vk::ClearValue(vk::ClearColorValue(std::array{linear(ui::background.r), linear(ui::background.g), linear(ui::background.b), ui::background.a}))};
         command.beginRendering({.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &attachment});
         command.setViewport(0, vk::Viewport{0, 0, static_cast<float>(extent.width), static_cast<float>(extent.height), 0, 1});
         command.setScissor(0, vk::Rect2D{{0, 0}, extent});
         command.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline_layout, 0, *descriptor, {});
         command.bindVertexBuffers(0, *vertex_buffer.handle, vk::DeviceSize{0});
-        Push push{.screen = {static_cast<float>(extent.width), static_cast<float>(extent.height), 0, scale}};
+        Push push{.screen = {static_cast<float>(extent.width), static_cast<float>(extent.height), 0, scale}, .focus_strength = focus_strength};
         command.pushConstants<Push>(*pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, push);
         command.bindPipeline(vk::PipelineBindPoint::eGraphics, *ui_pipeline);
         command.draw(wave_layer, 1, 0, 0);
@@ -269,13 +287,12 @@ namespace editor {
                 push.data = {static_cast<std::uint32_t>(first), 0, 0, raw_offset};
                 push.track = {channels, 0, frames, 0};
                 push.screen[2] = overview ? 1.f : 0.f;
-                push.playhead = static_cast<float>((area.x + (wave_position - first) / count * area.width) * scale);
                 for (std::size_t level = 0; level < peak_blocks.size() && peak_blocks[level] <= push.view[0] / 4; ++level) {
                     push.data[1] = peak_offsets[level];
                     push.data[2] = peak_blocks[level];
                     push.track[3] = (frames + peak_blocks[level] - 1) / peak_blocks[level];
                 }
-                const auto color = overview ? muted : waveform_color;
+                const auto color = overview ? ui::muted : ui::waveform_color;
                 push.color = {color.r, color.g, color.b, color.a};
                 const auto tracks = overview ? 1u : channels;
                 for (std::uint32_t channel = 0; channel < tracks; ++channel) {
@@ -382,7 +399,7 @@ namespace editor {
                 const float gx        = std::round(x + direction * offset.advanceOffset - (direction < 0 ? run->glyphAdvances[i] : 0)) + glyph.left;
                 const float gy        = std::round(y - offset.ascenderOffset) + glyph.top;
                 if (glyph.width && glyph.height) {
-                    for (const auto& corner : std::array{std::array{0.f, 0.f}, std::array{1.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 1.f}}) vertices.push_back({gx + glyph.width * corner[0], gy + glyph.height * corner[1], (glyph.x + glyph.width * corner[0]) / 2048.f, (glyph.y + glyph.height * corner[1]) / 2048.f, text_color, 1});
+                    for (const auto& corner : std::array{std::array{0.f, 0.f}, std::array{1.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 0.f}, std::array{1.f, 1.f}, std::array{0.f, 1.f}}) vertices.push_back({gx + glyph.width * corner[0], gy + glyph.height * corner[1], (glyph.x + glyph.width * corner[0]) / 2048.f, (glyph.y + glyph.height * corner[1]) / 2048.f, text_color, 1, 0, 0, 0, focus_levels});
                 }
                 x += direction * run->glyphAdvances[i];
             }
