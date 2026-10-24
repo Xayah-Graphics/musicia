@@ -141,6 +141,9 @@ namespace minidaw {
         constexpr std::array numerals{L"I", L"II", L"III", L"IV", L"V", L"VI", L"VII"};
         const float note_font_size = std::clamp(rh * .36f, 11.f, 20.f);
         const float note_text_height = note_font_size * 1.4f;
+        const float velocity_font_size = std::clamp(note_font_size * .9f, 11.f, 15.f);
+        const float velocity_text_height = velocity_font_size * 1.4f;
+        const float velocity_width = velocity_font_size * 2.1f;
         for (const auto& note : sequence.notes) {
             const int degree = document.degree(note.pitch);
             const float top = grid.y + static_cast<float>(document.top_degree - degree) * rh + 3;
@@ -168,21 +171,25 @@ namespace minidaw {
                 const bool active_edge = edge_gesture == Gesture::resize_end;
                 const bool dragging_edge = active_edge && dragged == note.id && gesture == Gesture::resize_end;
                 const float cap_radius = std::min(std::max(0.f, radius - border_width), (cap_right - cap_left) * .5f);
-                draw.rect({cap_left, y + border_width, cap_right - cap_left, bottom - y - 2 * border_width}, {0, 0, 0, dragging_edge ? .2f : pointing || active_edge ? .14f : .08f}, cap_radius);
-                if (cap_right - cap_left >= 3 && bottom - y > 10) {
-                    const float edge = std::max(cap_left, cap_right - 5);
-                    const float handle_height = std::min(18.f, bottom - y - 10);
-                    draw.rect({edge, y + (bottom - y - handle_height) * .5f, 3, handle_height}, {text.r, text.g, text.b, active_edge ? 1.f : selected ? .8f : .5f}, 1);
-                }
+                draw.rect({cap_left, y + border_width, cap_right - cap_left, bottom - y - 2 * border_width}, {0, 0, 0, dragging_edge ? .48f : pointing || active_edge ? .4f : .32f}, cap_radius);
             }
+            const float content_left = left + 9;
+            const float content_right = finish <= end_x ? cap_left - 5 : right - 9;
+            const float velocity_y = top + (rh - 11 - velocity_text_height) / 2;
+            const bool show_velocity = content_right - content_left >= velocity_width && velocity_y >= y + 2 && velocity_y + velocity_text_height <= bottom - 7;
+            if (show_velocity) draw.text(std::to_wstring(note.velocity), velocity_font_size, content_right - velocity_width, velocity_y, text, velocity_width, true, true);
             const float text_y = top + (rh - 11 - note_text_height) / 2;
-            const float text_width = right - left - 18;
+            const float text_width = content_right - content_left - (show_velocity ? velocity_width + 8 : 0);
             if (text_width > 0 && text_y >= y + 2 && text_y + note_text_height <= bottom - 7) {
                 const int solfege_degree = (degree % 7 + (sequence.minor ? 5 : 0)) % 7;
-                const float advance = draw.text(solfege[solfege_degree], note_font_size, left + 9, text_y, text, text_width, false, true);
-                if (advance < text_width) draw.text(std::format(L" ({})", numerals[degree % 7]), note_font_size, left + 9 + advance, text_y, {text.r, text.g, text.b, .72f}, text_width - advance, false, true);
+                const float advance = draw.text(solfege[solfege_degree], note_font_size, content_left, text_y, text, text_width, false, true);
+                if (advance < text_width) draw.text(std::format(L" ({})", numerals[degree % 7]), note_font_size, content_left + advance, text_y, {text.r, text.g, text.b, .72f}, text_width - advance, false, true);
             }
-            if ((selected || pointing) && bottom - y > 10 && right - left > 12) draw.rect({left + 6, bottom - 5, (right - left - 12) * note.velocity / 127.f, 2}, {text.r, text.g, text.b, .42f}, 1);
+            if (bottom - y > 10 && right - left > 12) {
+                const float velocity_track_width = right - left - 12;
+                draw.rect({left + 6, bottom - 6, velocity_track_width, 3}, {text.r, text.g, text.b, .16f}, 1);
+                draw.rect({left + 6, bottom - 6, std::min(velocity_track_width, std::max(1.f, velocity_track_width * note.velocity / 127.f)), 3}, {text.r, text.g, text.b, .9f}, 1);
+            }
         }
         if (gesture == Gesture::marquee && moved) {
             const float ax = std::clamp(x_at(anchor_beat), grid.x, end_x);
