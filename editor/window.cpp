@@ -110,6 +110,8 @@ namespace editor {
         initial_view = true;
         analysis_stop.request_stop();
         analysis.reset();
+        timeline_beats.clear();
+        double_bpm = false;
         bar_focus.clear();
         focus_from.clear();
         bar_tints.clear();
@@ -315,6 +317,8 @@ namespace editor {
         draw.focus_levels = {1, 1};
         draw.focus_tint = 0;
         draw.focus_strength = 0;
+        key_control = {};
+        tempo_control = {};
         focus_animating = false;
         if (!loaded) {
             const auto title = loading ? L"Loading audio..." : error.empty() ? L"Drop an audio file" : L"Unable to open audio";
@@ -351,14 +355,14 @@ namespace editor {
                 float fade_phase = std::clamp(std::chrono::duration<float>(now - focus_fade_started).count() / std::chrono::duration<float>(ui::focus_fade_duration).count(), 0.f, 1.f);
                 const float fade_blend = fade_phase * fade_phase * fade_phase * (10 + fade_phase * (6 * fade_phase - 15));
                 focus_strength = std::lerp(focus_strength_from, focus_strength_target, fade_blend);
-                std::size_t focus_index = analysis->beats.size();
-                for (auto beat = std::ranges::upper_bound(analysis->beats, seconds, {}, &musicia::Beat::time); beat != analysis->beats.begin();) {
+                std::size_t focus_index = timeline_beats.size();
+                for (auto beat = std::ranges::upper_bound(timeline_beats, seconds, {}, &musicia::Beat::time); beat != timeline_beats.begin();) {
                     --beat;
                     if (beat->position != 1) continue;
-                    focus_index = static_cast<std::size_t>(beat - analysis->beats.begin());
+                    focus_index = static_cast<std::size_t>(beat - timeline_beats.begin());
                     break;
                 }
-                const bool in_bar = focus_index != analysis->beats.size() && seconds < duration;
+                const bool in_bar = focus_index != timeline_beats.size() && seconds < duration;
                 double color_phase = std::clamp(std::chrono::duration<double>(now - chord_color_started).count() / chord_color_span.count(), 0., 1.);
                 const float color_blend = static_cast<float>(color_phase * color_phase * color_phase * (10 + color_phase * (6 * color_phase - 15)));
                 for (std::size_t channel = 0; channel < chord_tint.size(); ++channel) chord_tint[channel] = std::lerp(chord_tint_from[channel], chord_tint_to[channel], color_blend);
@@ -413,19 +417,19 @@ namespace editor {
                 if (focus_strength > 0) {
                     for (std::size_t index = 0; index < bar_focus.size(); ++index) {
                         if (bar_focus[index] == 0) continue;
-                        const double start = analysis->beats[index].time;
-                        const auto next = std::ranges::find(analysis->beats.begin() + index + 1, analysis->beats.end(), 1, &musicia::Beat::position);
-                        const double end = next == analysis->beats.end() ? duration : next->time;
+                        const double start = timeline_beats[index].time;
+                        const auto next = std::ranges::find(timeline_beats.begin() + index + 1, timeline_beats.end(), 1, &musicia::Beat::position);
+                        const double end = next == timeline_beats.end() ? duration : next->time;
                         std::array<double, 4> bounds{start, start, end, end};
                         for (std::size_t previous = index; previous > 0;) {
                             --previous;
-                            if (analysis->beats[previous].position != 1) continue;
-                            bounds[0] = analysis->beats[previous].time;
+                            if (timeline_beats[previous].position != 1) continue;
+                            bounds[0] = timeline_beats[previous].time;
                             break;
                         }
-                        if (next != analysis->beats.end()) {
-                            const auto after = std::ranges::find(std::next(next), analysis->beats.end(), 1, &musicia::Beat::position);
-                            bounds[3] = after == analysis->beats.end() ? duration : after->time;
+                        if (next != timeline_beats.end()) {
+                            const auto after = std::ranges::find(std::next(next), timeline_beats.end(), 1, &musicia::Beat::position);
+                            bounds[3] = after == timeline_beats.end() ? duration : after->time;
                         }
                         std::array<std::size_t, 4> columns;
                         for (std::size_t edge = 0; edge < columns.size(); ++edge) {
@@ -539,19 +543,19 @@ namespace editor {
                     if (chord_end <= view_start || chord.numeral.empty()) continue;
                     const bool active = seconds >= chord.start && (seconds < chord_end || (current_frame == clip.frames && chord_end >= duration - .001));
                     draw.focus_tint = active ? ui::chord_annotation_mix : 0;
-                    auto next_bar = std::ranges::upper_bound(analysis->beats, chord.start, {}, &musicia::Beat::time);
+                    auto next_bar = std::ranges::upper_bound(timeline_beats, chord.start, {}, &musicia::Beat::time);
                     for (double start = chord.start; start < chord_end && start < view_end;) {
-                        next_bar = std::ranges::find_if(next_bar, analysis->beats.end(), [](const auto& beat) { return beat.position == 1; });
-                        const double end = next_bar == analysis->beats.end() ? chord_end : std::min(chord_end, next_bar->time);
+                        next_bar = std::ranges::find_if(next_bar, timeline_beats.end(), [](const auto& beat) { return beat.position == 1; });
+                        const double end = next_bar == timeline_beats.end() ? chord_end : std::min(chord_end, next_bar->time);
                         if (end > view_start) {
                             const float center = melody.x + static_cast<float>((std::midpoint(start, end) - view_start) * pixels);
                             const float text_width = static_cast<float>((end - start) * pixels) - 24;
                             if (text_width >= chord_font_sizes.back()) {
                                 float emphasis = 0;
-                                for (auto beat = next_bar; beat != analysis->beats.begin();) {
+                                for (auto beat = next_bar; beat != timeline_beats.begin();) {
                                     --beat;
                                     if (beat->position != 1) continue;
-                                    emphasis = focus_strength * bar_focus[static_cast<std::size_t>(beat - analysis->beats.begin())];
+                                    emphasis = focus_strength * bar_focus[static_cast<std::size_t>(beat - timeline_beats.begin())];
                                     break;
                                 }
                                 const float chord_light = std::lerp(.28f, .50f, emphasis);
@@ -571,7 +575,7 @@ namespace editor {
                             }
                         }
                         start = end;
-                        if (next_bar != analysis->beats.end()) ++next_bar;
+                        if (next_bar != timeline_beats.end()) ++next_bar;
                     }
                 }
                 draw.focus_levels = {1, 1};
@@ -580,8 +584,8 @@ namespace editor {
                 float last_label_x = -std::numeric_limits<float>::infinity();
                 float last_bar_x = -std::numeric_limits<float>::infinity();
                 constexpr std::array grid_colors{ui::bar_grid, ui::beat_grid, ui::eighth_grid, ui::sixteenth_grid};
-                for (std::size_t index = 0; index < analysis->beats.size(); ++index) {
-                    const auto& beat = analysis->beats[index];
+                for (std::size_t index = 0; index < timeline_beats.size(); ++index) {
+                    const auto& beat = timeline_beats[index];
                     if (beat.position == 1) ++bar;
                     if (beat.time <= view_start) first_bar = bar;
                     if (beat.time < view_end) last_bar = bar;
@@ -598,8 +602,8 @@ namespace editor {
                             last_label_x = x;
                         }
                     }
-                    const bool last_beat = index + 1 == analysis->beats.size();
-                    const double next_time = last_beat ? beat.time : analysis->beats[index + 1].time;
+                    const bool last_beat = index + 1 == timeline_beats.size();
+                    const double next_time = last_beat ? beat.time : timeline_beats[index + 1].time;
                     if (next_time < view_start || beat.time >= view_end) continue;
                     const double sixteenth = (next_time - beat.time) * beat.denominator / 16;
                     const bool compound = beat.denominator == 8 && beat.numerator >= 6 && beat.numerator % 3 == 0;
@@ -753,20 +757,20 @@ namespace editor {
                     const float underline_height = std::round(ui::focus_underline_width * draw.scale) / draw.scale;
                     for (std::size_t index = 0; index < bar_focus.size(); ++index) {
                         if (bar_focus[index] == 0) continue;
-                        const auto next = std::ranges::find(analysis->beats.begin() + index + 1, analysis->beats.end(), 1, &musicia::Beat::position);
-                        const double end = next == analysis->beats.end() ? duration : next->time;
-                        const float left = std::clamp(content.x + static_cast<float>((analysis->beats[index].time - view_start) * pixels), content.x, content.x + content.width);
+                        const auto next = std::ranges::find(timeline_beats.begin() + index + 1, timeline_beats.end(), 1, &musicia::Beat::position);
+                        const double end = next == timeline_beats.end() ? duration : next->time;
+                        const float left = std::clamp(content.x + static_cast<float>((timeline_beats[index].time - view_start) * pixels), content.x, content.x + content.width);
                         const float right = std::clamp(content.x + static_cast<float>((end - view_start) * pixels), content.x, content.x + content.width);
                         const auto accent = ui::harmonic_color(ui::accent, bar_tints[index], 1.f);
                         if (right > left) draw.rect({left, content.y + 30 - underline_height, right - left, underline_height}, {accent.r, accent.g, accent.b, focus_strength * bar_focus[index]});
                     }
                 }
-                const auto beat = std::ranges::upper_bound(analysis->beats, seconds, {}, &musicia::Beat::time);
-                if (beat != analysis->beats.begin()) {
+                const auto beat = std::ranges::upper_bound(timeline_beats, seconds, {}, &musicia::Beat::time);
+                if (beat != timeline_beats.begin()) {
                     const auto& meter = *std::prev(beat);
                     meter_label = std::format(L"{}/{}", meter.numerator, meter.denominator);
                 }
-                bpm_label = std::format(L"{:.1f}", analysis->bpm);
+                bpm_label = std::format(L"{:.1f}", analysis->bpm * (double_bpm ? 2 : 1));
             } else if (!analysis_error.empty()) {
                 context = analysis_error;
                 status_color = ui::overload_color;
@@ -774,9 +778,11 @@ namespace editor {
                 const auto stage = progress.stage.load();
                 context = stage == musicia::AnalysisStage::loading ? L"Loading model..." : std::format(L"Analyzing {} / {}", progress.window.load(), progress.windows.load());
             }
-            draw.text(key_label, ui::value_size, ui::key_x, ui::toolbar_y, key_label == L"—" ? ui::muted : context_accent, 160);
+            const float key_width = draw.text(key_label, ui::value_size, ui::key_x, ui::toolbar_y, key_label == L"—" ? ui::muted : context_accent, 160);
+            if (key_label != L"—") key_control = {ui::key_x - 4, ui::toolbar_y - 4, std::min(key_width, 160.f) + 8, ui::value_size * 1.4f + 8};
             draw.text(bpm_label, ui::value_size, ui::tempo_x, ui::toolbar_y, bpm_label == L"—" ? ui::muted : context_accent, 60);
-            draw.text(L"BPM", ui::unit_size, ui::tempo_unit_x, ui::toolbar_y + 7, ui::muted, 35);
+            const float tempo_unit_width = draw.text(L"BPM", ui::unit_size, ui::tempo_unit_x, ui::toolbar_y + 7, ui::muted, 35);
+            if (bpm_label != L"—") tempo_control = {ui::tempo_x - 4, ui::toolbar_y - 4, ui::tempo_unit_x + tempo_unit_width - ui::tempo_x + 8, ui::value_size * 1.4f + 8};
             draw.text(meter_label, ui::secondary_size, ui::meter_x, ui::toolbar_y + 2, meter_label == L"—" ? ui::muted : context_accent, 60);
             draw.rect({ui::outer_margin, height - ui::footer_height, width - 2 * ui::outer_margin, hairline}, ui::rule_color);
             draw.text(context, ui::label_size, ui::label_x, height - 28, status_color, width - 680);
@@ -909,6 +915,7 @@ namespace editor {
         else if (drag == Drag::left || drag == Drag::right) shape = IDC_SIZEWE;
         else if (drag == Drag::pan || drag == Drag::pan_overview) shape = drag_moved ? IDC_HAND : IDC_CROSS;
         else if (drag == Drag::view) shape = IDC_HAND;
+        else if (analysis && GetKeyState(VK_SHIFT) < 0 && (key_control.contains(x, y) || tempo_control.contains(x, y))) shape = IDC_HAND;
         else if (Rect{width - ui::master_right, height - 40, 90, 36}.contains(x, y) || wave_divider.contains(x, y)) shape = IDC_SIZENS;
         else if (Rect{width - ui::overload_right, height - 38, 46, 32}.contains(x, y)) shape = IDC_HAND;
         else if (melody_tabs[0].contains(x, y) || melody_tabs[1].contains(x, y)) shape = analysis ? IDC_HAND : IDC_ARROW;
@@ -1044,19 +1051,20 @@ namespace editor {
                     auto completed = analyzing.get();
                     if (!analysis_stop.stop_requested()) {
                         analysis = std::move(completed);
-                        bar_focus.assign(analysis->beats.size(), 0.f);
-                        focus_from.assign(analysis->beats.size(), 0.f);
-                        bar_tints.assign(analysis->beats.size(), std::array<float, 4>{});
+                        timeline_beats = analysis->beats;
+                        bar_focus.assign(timeline_beats.size(), 0.f);
+                        focus_from.assign(timeline_beats.size(), 0.f);
+                        bar_tints.assign(timeline_beats.size(), std::array<float, 4>{});
                         melody_track = std::ranges::any_of(analysis->notes, [](const auto& note) { return note.track == 0; }) ? 0 : 1;
                         rebuild_analysis_view();
                         if (initial_view) {
-                            const auto first = std::ranges::find(analysis->beats, 1, &musicia::Beat::position);
-                            if (first != analysis->beats.end()) {
+                            const auto first = std::ranges::find(timeline_beats, 1, &musicia::Beat::position);
+                            if (first != timeline_beats.end()) {
                                 const float bar_width = (3440.f / renderer->scale - ui::timeline_x - ui::right_margin) / 6;
                                 const int visible_bars = std::max(1, static_cast<int>(std::lround(content.width / bar_width)));
                                 double end = static_cast<double>(audio.clip.frames) / audio.clip.sample_rate;
                                 int bars = 0;
-                                for (auto beat = first; beat != analysis->beats.end(); ++beat) {
+                                for (auto beat = first; beat != timeline_beats.end(); ++beat) {
                                     if (beat->position != 1 || bars++ != visible_bars) continue;
                                     end = beat->time;
                                     break;
@@ -1198,10 +1206,12 @@ namespace editor {
                         }
                     }
                 }
-                if ((wparam & MK_SHIFT) && analysis && lanes[1].contains(x, y)) {
-                    const double time = timeline.frame((x - content.x) / content.width) / audio.clip.sample_rate;
+                if ((wparam & MK_SHIFT) && analysis && key_control.contains(x, y)) {
+                    const auto frame = audio.position();
+                    const double time = static_cast<double>(frame) / audio.clip.sample_rate;
+                    const double duration = static_cast<double>(audio.clip.frames) / audio.clip.sample_rate;
                     for (auto& key : analysis->keys) {
-                        if (time < key.start || time >= key.end) continue;
+                        if (time < key.start || (time >= key.end && !(frame == audio.clip.frames && key.end >= duration - .001))) continue;
                         constexpr std::string_view letters = "CDEFGAB";
                         constexpr std::array natural{0, 2, 4, 5, 7, 9, 11};
                         const auto root_letter = letters.find(key.label.front());
@@ -1215,6 +1225,32 @@ namespace editor {
                         refresh();
                         break;
                     }
+                    return 0;
+                }
+                if ((wparam & MK_SHIFT) && analysis && tempo_control.contains(x, y)) {
+                    double_bpm = !double_bpm;
+                    if (double_bpm) {
+                        timeline_beats.clear();
+                        timeline_beats.reserve(analysis->beats.size() * 2);
+                        bool in_bar = false;
+                        for (std::size_t index = 0; index < analysis->beats.size(); ++index) {
+                            const auto& beat = analysis->beats[index];
+                            in_bar |= beat.position == 1;
+                            const int position = in_bar ? (2 * (beat.position - 1)) % beat.numerator + 1 : 1 - 2 * (beat.numerator - beat.position + 1);
+                            timeline_beats.push_back({beat.time, position, beat.numerator, beat.denominator});
+                            if (index + 1 < analysis->beats.size()) {
+                                const double midpoint = std::midpoint(beat.time, analysis->beats[index + 1].time);
+                                timeline_beats.push_back({midpoint, in_bar ? position % beat.numerator + 1 : position + 1, beat.numerator, beat.denominator});
+                            }
+                        }
+                    } else timeline_beats = analysis->beats;
+                    bar_focus.assign(timeline_beats.size(), 0.f);
+                    focus_from.assign(timeline_beats.size(), 0.f);
+                    bar_tints.assign(timeline_beats.size(), std::array<float, 4>{});
+                    bar_tint_from = {};
+                    focus_target.reset();
+                    focus_started = {};
+                    refresh();
                     return 0;
                 }
                 if (wave_divider.contains(x, y)) {
@@ -1316,6 +1352,10 @@ namespace editor {
             }
             break;
         case WM_KEYDOWN:
+            if (wparam == VK_SHIFT && loaded) {
+                cursor();
+                return 0;
+            }
             if (wparam == VK_ESCAPE && drag != Drag::none) {
                 finish_drag();
                 return 0;
@@ -1351,6 +1391,9 @@ namespace editor {
                     locate(frame);
                 }
             }
+            return 0;
+        case WM_KEYUP:
+            if (wparam == VK_SHIFT && loaded) cursor();
             return 0;
         case WM_CANCELMODE:
             finish_drag();

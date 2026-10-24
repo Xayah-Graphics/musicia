@@ -36,6 +36,8 @@ export namespace editor {
         std::stop_source analysis_stop;
         std::shared_ptr<const std::vector<float>> analysis_samples;
         std::optional<musicia::Analysis> analysis;
+        std::vector<musicia::Beat> timeline_beats;
+        bool double_bpm{};
         musicia::AnalysisProgress progress;
         std::wstring analysis_error;
         bool analysis_pending{};
@@ -67,7 +69,7 @@ export namespace editor {
         std::chrono::steady_clock::time_point meter_updated{std::chrono::steady_clock::now()};
         enum struct Drag { none, pan, pan_overview, height, view, left, right, gain };
         Drag drag{Drag::none};
-        Rect content, waveform, overview, wave_divider, melody;
+        Rect content, waveform, overview, wave_divider, melody, key_control, tempo_control;
         std::array<Rect, 3> lanes;
         std::array<Rect, 2> melody_tabs;
         int melody_track{};
